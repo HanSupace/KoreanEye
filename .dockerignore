@@ -1,0 +1,10 @@
+node_modules
+frontend/.next
+backend/.gradle
+backend/build
+.git
+.gradle-bootstrap
+gradle-bootstrap.zip
+dist
+index.html
+hangul-detective-deploy.tar.gz

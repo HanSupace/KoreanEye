@@ -1,21 +1,22 @@
-# API 초안
+# API
 
-모든 학생별 요청은 인증된 보호자가 해당 자녀를 관리할 권한이 있는지 서버에서 확인합니다. 이 초안의 API는 아직 구현되지 않았습니다.
+Base path는 `/api`입니다. 가입/로그인을 제외한 요청에 `Authorization: Bearer <JWT>`가 필요합니다.
 
-| Method | Path | 목적 |
+| Method | Path | 기능 |
 |---|---|---|
-| POST | `/api/auth/signup` | 보호자 가입 |
-| POST | `/api/auth/login` | 보호자 로그인 |
-| GET / POST | `/api/students` | 자녀 목록 / 등록 |
-| GET | `/api/students/{studentId}/daily-learning` | 오늘의 미션 요약 |
-| GET | `/api/students/{studentId}/questions/today` | 가중 추천 문제 5개 |
-| POST | `/api/questions/{questionId}/attempt` | 문제 풀이 저장 |
-| POST | `/api/students/{studentId}/writings` | 글 저장 |
-| POST | `/api/writings/{writingId}/analyze` | 글 분석 요청 |
-| POST | `/api/writing-errors/{errorId}/attempt` | 오류 다시 쓰기 저장 |
-| POST | `/api/writing-errors/{errorId}/hint` | 다음 단계 힌트 요청 및 사용량 저장 |
-| GET | `/api/students/{studentId}/weaknesses` | 유형별 약점 요약 |
-| GET | `/api/students/{studentId}/reports/weekly` | 보호자 주간 보고서 |
+| POST | `/auth/signup` | 보호자 계정 생성 및 JWT 발급 |
+| POST | `/auth/login` | 보호자 로그인 및 JWT 발급 |
+| GET / POST | `/students` | 보호자 자녀 목록 / 자녀 등록 |
+| GET | `/students/{studentId}/daily-learning` | 오늘의 미션 진행률 |
+| GET | `/students/{studentId}/questions/today` | 맞춤 문제 5개 |
+| POST | `/questions/{questionId}/attempt` | 학생 답안 저장 |
+| POST / GET | `/students/{studentId}/writings` | 글 분석 및 저장 / 글 목록 |
+| GET | `/writings/{writingId}` | 글과 오류 후보 조회 |
+| POST | `/writing-errors/{errorId}/attempt` | 다시 쓰기 시도 저장 |
+| POST | `/writing-errors/{errorId}/hint` | 단계별 힌트 사용 저장 |
+| GET | `/students/{studentId}/weaknesses` | 유형별 약점 요약 |
+| GET | `/students/{studentId}/reports/weekly` | 보호자 주간 보고서 |
+| GET | `/health` | API 상태 확인 |
 
-분석 결과는 `originalText`와 오류 배열을 포함하는 JSON으로 반환합니다. 각 오류는 원문 범위, 오답 표현, 제안 표현, 카테고리, 설명, 두 단계 힌트, 마지막 단계 선택지를 포함합니다. 서버는 모델 응답 파싱 실패를 안전하게 처리하고 결과를 검증해야 합니다.
+다시 쓰기 API는 정답을 먼저 반환하지 않고, 맞힌 경우에만 `correctExpression`을 돌려줍니다. AI 후보는 서버에서 원문 인덱스와 실제 표현이 일치하는지 확인하고 저장합니다.
 
