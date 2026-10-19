@@ -21,7 +21,8 @@ public class WritingService {
     @Transactional public WritingDto create(UUID studentId,String email,String text){
         if(text==null||text.isBlank())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"한 문장만 적어도 좋아요.");
         if(text.length()>5000)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"글은 5,000자까지 쓸 수 있어요.");
-        StudentProfile student=students.requireOwned(studentId,email); WritingEntry writing=new WritingEntry(student,text);
+        StudentProfile student=students.requireOwned(studentId,email);
+        WritingEntry writing=new WritingEntry(student,text);
         SpellCheckService.AnalysisResult analysis=spellCheck.analyze(text); int lastEnd=-1;
         for(SpellCheckService.DetectedError e:analysis.errors()){
             if(e.startIndex()<0||e.endIndex()>text.length()||e.startIndex()>=e.endIndex()||e.startIndex()<lastEnd)continue;
@@ -42,7 +43,7 @@ public class WritingService {
         String summary=weak.isEmpty()?"이번 주도 꾸준히 한글 탐정 활동을 이어가고 있어요. 글을 쓰면 아이에게 맞는 단서를 찾아볼게요.":"이번 주에는 "+categoryName(weak.get(0).category())+" 단서를 자주 만났어요. 직접 다시 쓰며 연습하고 있고, 다음 문제에도 이 유형을 조금 더 반영할게요.";
         int spacingAccuracy=categoryAccuracy(spacingErrors),spellingAccuracy=categoryAccuracy(spellingErrors);return new WeeklyDto((int)days,ws.size(),spellingAccuracy,spacingAccuracy,weak,repeat,summary);
     }
-    private void owned(WritingEntry w,String email){if(!w.getStudent().getParent().getEmail().equals(email))throw new ResponseStatusException(HttpStatus.NOT_FOUND);}
+    private void owned(WritingEntry w,String username){if(!w.getStudent().getParent().getUsername().equals(username))throw new ResponseStatusException(HttpStatus.NOT_FOUND);}
     private List<String> choices(WritingError e){try{return mapper.readValue(e.getChoicesJson(),new TypeReference<>(){});}catch(Exception ignored){return List.of();}}
     private WritingDto toDto(WritingEntry w,String provider){return new WritingDto(w.getId(),w.getText(),w.getCreatedAt(),provider,w.getErrors().stream().map(e->new ErrorDto(e.getId(),e.getOriginal(),e.getCorrect(),e.getStartIndex(),e.getEndIndex(),e.getCategory(),e.getExplanation(),e.getHintLevel1(),e.getHintLevel2(),choices(e),e.getAttemptCount(),e.getHintLevelUsed(),e.isSolved())).toList());}
     private String categoryName(String c){return switch(c){case "SPACING"->"띄어쓰기";case "PRONUNCIATION_SPELLING"->"발음과 표기";case "FINAL_CONSONANT"->"받침";case "DOE_DWAE"->"돼/되";default->c;};}

@@ -18,4 +18,5 @@ public class QuestionAttempt {
     public boolean isCorrect() { return correct; }
     public Instant getCreatedAt() { return createdAt; }
     public UUID getQuestionId() { return question.getId(); }
+    public String getQuestionCategory() { return question.getCategory(); }
 }

@@ -18,6 +18,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
 @Configuration
@@ -25,7 +27,28 @@ public class SecurityConfig {
     @Bean SecretKey jwtKey(@Value("${app.jwt-secret}") String secret) { return new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"); }
     @Bean JwtEncoder jwtEncoder(SecretKey key) { return new NimbusJwtEncoder(new ImmutableSecret<>(key)); }
     @Bean JwtDecoder jwtDecoder(SecretKey key) { return NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build(); }
-    @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
+    @Bean PasswordEncoder passwordEncoder() {
+        BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
+        return new PasswordEncoder() {
+            @Override public String encode(CharSequence rawPassword) {
+                return bcrypt.encode(prehash(rawPassword));
+            }
+            @Override public boolean matches(CharSequence rawPassword, String encodedPassword) {
+                if (bcrypt.matches(prehash(rawPassword), encodedPassword)) return true;
+                // Accept hashes created by the previous direct-BCrypt encoder during migration.
+                return rawPassword.toString().getBytes(StandardCharsets.UTF_8).length <= 72
+                    && bcrypt.matches(rawPassword, encodedPassword);
+            }
+            private String prehash(CharSequence rawPassword) {
+                try {
+                    byte[] digest = MessageDigest.getInstance("SHA-256").digest(rawPassword.toString().getBytes(StandardCharsets.UTF_8));
+                    return java.util.HexFormat.of().formatHex(digest);
+                } catch (NoSuchAlgorithmException impossible) {
+                    throw new IllegalStateException("SHA-256 is unavailable", impossible);
+                }
+            }
+        };
+    }
     @Bean CorsConfigurationSource corsConfigurationSource(@Value("${app.cors-origin}") String origin) {
         CorsConfiguration config = new CorsConfiguration(); config.setAllowedOrigins(List.of(origin)); config.setAllowedMethods(List.of("GET","POST","PUT","DELETE","OPTIONS")); config.setAllowedHeaders(List.of("Authorization","Content-Type"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource(); source.registerCorsConfiguration("/**", config); return source;

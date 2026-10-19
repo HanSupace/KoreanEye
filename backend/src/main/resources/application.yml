@@ -1,12 +1,16 @@
 server:
   port: ${SERVER_PORT:8080}
 spring:
+  config:
+    import: optional:file:../.env[.properties]
   application:
     name: hangul-detective-api
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/hangul_detective}
-    username: ${DATABASE_USERNAME:hangul}
-    password: ${DATABASE_PASSWORD:hangul-local}
+    url: ${SUPABASE_JDBC_URL}
+    username: ${SUPABASE_DB_USERNAME}
+    password: ${SUPABASE_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
   jpa:
     hibernate:
       ddl-auto: update
@@ -25,3 +29,6 @@ app:
     mode: ${AI_MODE:rules}
     api-key: ${OPENAI_API_KEY:}
     model: ${OPENAI_MODEL:gpt-6-astra}
+    gemini-api-key: ${GOOGLE_GEMINI_API_KEY:}
+    gemini-model: ${GOOGLE_GEMINI_MODEL:gemini-3.1-flash-lite}
+  google-vision-api-key: ${GOOGLE_CLOUD_VISION_API_KEY:}

@@ -14,6 +14,6 @@ export function NotebookArt() {
 }
 
 export function NavIcon({ name }: { name: string }) {
-    const paths: Record<string,string> = { today:"M4 4h16v16H4z M8 4v16 M12 9h5 M12 13h5", quests:"M12 3 14.7 8.3 20.5 9.1 16.3 13.2 17.3 19 12 16.2 6.7 19 7.7 13.2 3.5 9.1 9.3 8.3z", ranking:"M8 21h8 M12 17v4 M5 4h14v12H5z M8 8h8 M8 12h5", questions:"m5 16 11-11 3 3-11 11-4 1z M14 7l3 3", write:"M13 4H4v16h16v-9 M10 14l1-4 8-8 3 3-8 8z", review:"M15 15l6 6 M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0", addStudent:"M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M2 21v-2a6 6 0 0 1 12 0v2 M19 10v8 M15 14h8" };
+    const paths: Record<string,string> = { today:"M4 4h16v16H4z M8 4v16 M12 9h5 M12 13h5", quests:"M12 3 14.7 8.3 20.5 9.1 16.3 13.2 17.3 19 12 16.2 6.7 19 7.7 13.2 3.5 9.1 9.3 8.3z", ranking:"M8 21h8 M12 17v4 M5 4h14v12H5z M8 8h8 M8 12h5", questions:"m5 16 11-11 3 3-11 11-4 1z M14 7l3 3", write:"M13 4H4v16h16v-9 M10 14l1-4 8-8 3 3-8 8z", review:"M15 15l6 6 M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0", addStudent:"M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M2 21v-2a6 6 0 0 1 12 0v2 M19 10v8 M15 14h8", mypage:"M12 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6 M5 21a7 7 0 0 1 14 0 M4 4h2 M18 4h2 M4 12h2 M18 12h2" };
   return <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]??paths.today}/></svg>;
 }

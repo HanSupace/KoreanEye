@@ -1,35 +1,18 @@
 services:
-  db:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: hangul_detective
-      POSTGRES_USER: hangul
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-hangul-local}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hangul -d hangul_detective"]
-      interval: 5s
-      timeout: 3s
-      retries: 15
   api:
     build: ./backend
     environment:
-      DATABASE_URL: jdbc:postgresql://db:5432/hangul_detective
-      DATABASE_USERNAME: hangul
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-hangul-local}
+      SUPABASE_JDBC_URL: ${SUPABASE_JDBC_URL:?Set SUPABASE_JDBC_URL in .env}
+      SUPABASE_DB_USERNAME: ${SUPABASE_DB_USERNAME:?Set SUPABASE_DB_USERNAME in .env}
+      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:?Set SUPABASE_DB_PASSWORD in .env}
       JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me-please-123456789}
       CORS_ORIGIN: http://localhost:3000
       AI_MODE: ${AI_MODE:-rules}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-astra}
+      GOOGLE_CLOUD_VISION_API_KEY: ${GOOGLE_CLOUD_VISION_API_KEY:-}
     ports:
       - "8080:8080"
-    depends_on:
-      db:
-        condition: service_healthy
   web:
     build:
       context: .
@@ -42,5 +25,3 @@ services:
       - "3000:3000"
     depends_on:
       - api
-volumes:
-  postgres-data:
