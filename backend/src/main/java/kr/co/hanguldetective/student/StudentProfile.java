@@ -20,4 +20,5 @@ public class StudentProfile {
     public String getName() { return name; }
     public int getGrade() { return grade; }
     public String getNickname() { return nickname; }
+    public void update(String name, int grade, String nickname) { this.name = name.trim(); this.grade = grade; this.nickname = nickname == null ? null : nickname.trim(); }
 }

@@ -15,6 +15,7 @@ public class ParentAccount {
     protected ParentAccount() {}
     public ParentAccount(String username, String passwordHash) { this.username = username; this.passwordHash = passwordHash; }
     public UUID getId() { return id; }
+    public Instant getCreatedAt() { return createdAt; }
     public String getUsername() { return username; }
     public String getPasswordHash() { return passwordHash; }
     public String getPreferredInputMode() { return preferredInputMode; }

@@ -1,4 +1,41 @@
 @import "tailwindcss";
+.mypage { max-width: 880px; }
+.mypage .preference-card { max-width: none; }
+.mypage .mypage-section { margin-bottom: 20px; padding: 28px; border: 1px solid var(--line); box-shadow: none; }
+.mypage-section h2 { margin-bottom: 24px; font-size: 18px; }
+.mypage-profile { display: flex; align-items: center; gap: 20px; }
+.mypage-avatar { display: grid; place-items: center; flex-shrink: 0; width: 72px; height: 72px; border-radius: 50%; background: #edf5f2; color: var(--blue); }
+.mypage-avatar svg { width: 36px; height: 36px; }
+.mypage-identity { flex: 1; min-width: 0; }
+.mypage-identity h3 { margin: 0 0 6px; font-size: 21px; }
+.mypage-identity p { margin-bottom: 12px; color: var(--muted); font-size: 14px; }
+.mypage-identity dl { margin: 0; font-size: 14px; }
+.mypage-identity dl div { display: flex; gap: 16px; margin-top: 7px; }
+.mypage-identity dt { flex-shrink: 0; width: 44px; color: var(--muted); }
+.mypage-identity dd { margin: 0; overflow-wrap: anywhere; }
+.mypage-links { display: grid; }
+.mypage-links > button { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; background: transparent; text-align: left; border-bottom: 1px solid var(--line); }
+.mypage-links > button:first-child { padding-top: 0; }
+.mypage-links > button:last-child { border-bottom: 0; padding-bottom: 0; }
+.mypage-links > button:hover { color: var(--blue); }
+.mypage-links b { font-weight: 600; }
+.mypage-links small { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.mypage-links > button > span:last-child { font-size: 24px; }
+.mypage .mypage-form { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
+.mypage-form p { line-height: 1.7; }
+.mypage-form .field-label { max-width: 480px; }
+.mypage-confirm { display: flex; align-items: flex-start; gap: 10px; margin: 20px 0; line-height: 1.6; }
+.mypage-confirm input { margin-top: 5px; accent-color: var(--blue); }
+.mypage .mypage-danger { color: #a13d36; }
+.mypage .mypage-delete-button { background: #a13d36; color: white; }
+@media (max-width: 600px) {
+  .mypage .mypage-section { padding: 20px; }
+  .mypage-profile { flex-wrap: wrap; gap: 16px; }
+  .mypage-avatar { width: 56px; height: 56px; }
+  .mypage-identity { flex-basis: calc(100% - 72px); }
+  .mypage-profile > button { width: 100%; }
+  .mypage .row-actions { flex-wrap: wrap; }
+}
 :root {
   --ink: #334d5d;
   --blue: #267d78;

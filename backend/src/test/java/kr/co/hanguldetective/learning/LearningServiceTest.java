@@ -7,12 +7,14 @@ import org.junit.jupiter.api.Test;
 import java.time.*;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class LearningServiceTest {
     final QuestionAttemptRepository attempts=mock(QuestionAttemptRepository.class);
     final WritingEntryRepository writings=mock(WritingEntryRepository.class);
-    final LearningService service=new LearningService(mock(LearningQuestionRepository.class),attempts,mock(StudentService.class),writings,mock(WritingErrorRepository.class),new ObjectMapper());
+    final LearningService service = new LearningService(mock(LearningQuestionRepository.class),attempts,    mock(QuestionReviewRepository.class),    mock(LearningChapterRepository.class),    mock(StudentService.class),   writings,    mock(WritingErrorRepository.class), new ObjectMapper());
     final UUID student=UUID.randomUUID();
 
     QuestionAttempt attempt(UUID question,boolean correct,Instant time){

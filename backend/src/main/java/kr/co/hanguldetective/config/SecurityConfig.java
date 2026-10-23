@@ -26,7 +26,19 @@ import java.util.List;
 public class SecurityConfig {
     @Bean SecretKey jwtKey(@Value("${app.jwt-secret}") String secret) { return new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"); }
     @Bean JwtEncoder jwtEncoder(SecretKey key) { return new NimbusJwtEncoder(new ImmutableSecret<>(key)); }
-    @Bean JwtDecoder jwtDecoder(SecretKey key) { return NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build(); }
+    @Bean JwtDecoder jwtDecoder(SecretKey key, kr.co.hanguldetective.auth.ParentAccountRepository accounts) {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build();
+        decoder.setJwtValidator(new org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator<>(
+            JwtValidators.createDefault(), jwt -> {
+                boolean active = accounts.findByUsername(jwt.getSubject()).map(account ->
+                    jwt.getIssuedAt() != null && !account.getCreatedAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).isAfter(jwt.getIssuedAt())
+                    && (jwt.getClaimAsString("accountId") == null || account.getId().toString().equals(jwt.getClaimAsString("accountId")))
+                ).orElse(false);
+                return active ? org.springframework.security.oauth2.core.OAuth2TokenValidatorResult.success()
+                    : org.springframework.security.oauth2.core.OAuth2TokenValidatorResult.failure(new org.springframework.security.oauth2.core.OAuth2Error("invalid_token"));
+            }));
+        return decoder;
+    }
     @Bean PasswordEncoder passwordEncoder() {
         BCryptPasswordEncoder bcrypt = new BCryptPasswordEncoder();
         return new PasswordEncoder() {

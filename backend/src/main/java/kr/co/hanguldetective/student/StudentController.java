@@ -16,5 +16,6 @@ public class StudentController {
     public StudentController(StudentService students) { this.students=students; }
     public record CreateStudent(@NotBlank @Size(max=40) String name,@Min(1) @Max(3) int grade,@Size(max=40) String nickname) {}
     @GetMapping public List<StudentService.StudentDto> list(Principal principal) { return students.list(principal.getName()); }
+    @PutMapping("/{id}") public StudentService.StudentDto update(Principal principal, @PathVariable java.util.UUID id, @Valid @RequestBody CreateStudent body) { return students.update(id, principal.getName(), body.name(), body.grade(), body.nickname()); }
     @PostMapping @ResponseStatus(HttpStatus.CREATED) public StudentService.StudentDto create(Principal principal,@Valid @RequestBody CreateStudent body) { return students.create(principal.getName(),body.name(),body.grade(),body.nickname()); }
 }

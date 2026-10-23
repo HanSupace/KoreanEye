@@ -31,5 +31,5 @@ public class AuthController {
         if(!passwords.matches(body.password(),account.getPasswordHash())) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"아이디 또는 비밀번호를 확인해 주세요."); return issue(username);
     }
     private String normalize(String username) { return username.trim().toLowerCase(java.util.Locale.ROOT); }
-    private AuthResult issue(String username) { Instant now=Instant.now(), expires=now.plus(expirationHours,ChronoUnit.HOURS); JwtClaimsSet claims=JwtClaimsSet.builder().subject(username).issuedAt(now).expiresAt(expires).claim("role","PARENT").build(); JwsHeader header=JwsHeader.with(MacAlgorithm.HS256).build(); return new AuthResult(encoder.encode(JwtEncoderParameters.from(header,claims)).getTokenValue(),username,expires); }
+    private AuthResult issue(String username) { Instant now=Instant.now(), expires=now.plus(expirationHours,ChronoUnit.HOURS); JwtClaimsSet claims=JwtClaimsSet.builder().subject(username).issuedAt(now).expiresAt(expires).claim("role","PARENT").claim("accountId",accounts.findByUsername(username).orElseThrow().getId().toString()).build(); JwsHeader header=JwsHeader.with(MacAlgorithm.HS256).build(); return new AuthResult(encoder.encode(JwtEncoderParameters.from(header,claims)).getTokenValue(),username,expires); }
 }

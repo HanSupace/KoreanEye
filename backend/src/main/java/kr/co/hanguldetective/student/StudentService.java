@@ -18,5 +18,11 @@ public class StudentService {
         if(grade<1||grade>3) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"학년은 1~3학년 중에서 골라 주세요.");
         ParentAccount parent=accounts.findByUsername(username).orElseThrow(); return StudentDto.from(students.save(new StudentProfile(parent,name.trim(),grade,nickname==null?null:nickname.trim())));
     }
+    @Transactional public StudentDto update(UUID id, String username, String name, int grade, String nickname) {
+        if (grade < 1 || grade > 3) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "학년은 1~3학년 중에서 골라 주세요.");
+        StudentProfile profile = requireOwned(id, username);
+        profile.update(name, grade, nickname);
+        return StudentDto.from(students.save(profile));
+    }
     public record StudentDto(UUID id,String name,int grade,String nickname) { static StudentDto from(StudentProfile s) { return new StudentDto(s.getId(),s.getName(),s.getGrade(),s.getNickname()); } }
 }

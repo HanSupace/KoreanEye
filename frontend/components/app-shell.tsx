@@ -102,6 +102,32 @@ export default function AppShell() {
   const [preferredInputMode, setPreferredInputMode] = useState<InputMode>("TYPE");
   const [writingInputMode, setWritingInputMode] = useState<InputMode>("TYPE");
   const [dictationInputMode, setDictationInputMode] = useState<InputMode>("TYPE");
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [accountError, setAccountError] = useState("");
+
+  const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!token || !student) return;
+    const form = new FormData(event.currentTarget);
+    setBusy(true); setAccountError("");
+    try {
+      const updated = await api<Student>(`/students/${student.id}`, { method: "PUT", body: JSON.stringify({ name: String(form.get("name")).trim(), grade: Number(form.get("grade")), nickname: String(form.get("nickname") ?? "").trim() }) }, token);
+      setStudent(updated); setStudents(list => list.map(item => item.id === updated.id ? updated : item));
+      setEditingProfile(false); notify("회원정보를 저장했어요.");
+    } catch (e) { setAccountError(e instanceof Error ? e.message : "회원정보를 저장하지 못했어요."); }
+    finally { setBusy(false); }
+  };
+
+  const deleteAccount = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!token) return;
+    const form = new FormData(event.currentTarget);
+    setBusy(true); setAccountError("");
+    try {
+      await api<void>("/account", { method: "DELETE", body: JSON.stringify({ password: form.get("password") }) }, token);
+      logout(); notify("회원탈퇴가 완료되었어요.");
+    } catch (e) { setAccountError(e instanceof Error ? e.message : "회원탈퇴를 처리하지 못했어요."); }
+    finally { setBusy(false); }
+  };
 
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
   const fail = useCallback((e: unknown) => setError(e instanceof ApiError ? e.message : "서버에 연결하지 못했어요. API와 데이터베이스 상태를 확인해 주세요."), []);
@@ -185,6 +211,7 @@ export default function AppShell() {
   };
 
   const logout = () => {
+    setEditingProfile(false); setDeletingAccount(false); setAccountError(""); setStory(""); setHints({}); setQuestionReviewChapters([]); setReviewSelections({}); setReviewResults({});
     localStorage.removeItem(STORE); setToken(null); setUsername(""); setStudents([]); setStudent(null); setRecords([]); setQuestions([]); setWriting(null); setPreferredInputMode("TYPE"); setPage("home"); setError("");
   };
 
@@ -337,7 +364,33 @@ export default function AppShell() {
 
   const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><label style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" />{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
 
-  const renderMyPage = () => <div className="content"><div className="section-head"><div><h1>마이페이지</h1><p>글쓰기와 받아쓰기에서 먼저 사용할 입력 방식을 정해요.</p></div></div><section className="panel preference-card"><h2>기본 입력 방식</h2><p>언제든 글쓰기나 받아쓰기 화면에서 입력 방식을 바꿀 수 있어요.</p><InputModePicker value={preferredInputMode} onChange={savePreferredInputMode} label="기본 입력 방식" /><div className="preference-detail"><b>{preferredInputMode === "TYPE" ? "타자로 입력" : "손글씨로 입력"}</b><span>{preferredInputMode === "TYPE" ? "화면 키보드나 연결한 키보드로 써요." : "손글씨를 Google Cloud Vision으로 읽어 텍스트로 바꿔요."}</span></div></section></div>;
+  const renderMyPage = () => <div className="content mypage">
+    <div className="section-head"><div><h1>마이페이지</h1><p>내 정보와 학습 기록을 한곳에서 관리하세요.</p></div></div>
+    <section className="panel mypage-section" aria-labelledby="profile-heading">
+      <h2 id="profile-heading">내 프로필</h2>
+      <div className="mypage-profile">
+        <span className="mypage-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></span>
+        <div className="mypage-identity"><h3>{student?.name}</h3><p>초등학교 {student?.grade}학년{student?.nickname ? ` · ${student.nickname}` : ""}</p><dl><div><dt>아이디</dt><dd>{username}</dd></div><div><dt>이메일</dt><dd>{username.includes("@") ? username : "등록된 이메일 없음"}</dd></div></dl></div>
+        <button className="btn secondary" disabled={busy} aria-expanded={editingProfile} aria-controls="mypage-profile-form" onClick={() => { setEditingProfile(v => !v); setDeletingAccount(false); setAccountError(""); }}>회원정보 수정</button>
+      </div>
+      {editingProfile && <form id="mypage-profile-form" className="mypage-form" key={student?.id} onSubmit={saveProfile}>
+        <p className="muted">현재 선택된 학습 프로필을 수정합니다. 로그인 아이디는 변경되지 않습니다.</p>
+        <label className="field-label">이름<input className="field-input" name="name" defaultValue={student?.name} required pattern=".*\S.*" maxLength={40} disabled={busy} /></label>
+        <label className="field-label">학년<select className="field-input" name="grade" defaultValue={student?.grade} disabled={busy}>{[1, 2, 3].map(grade => <option key={grade} value={grade}>초등학교 {grade}학년</option>)}</select></label>
+        <label className="field-label">별명 (선택)<input className="field-input" name="nickname" defaultValue={student?.nickname ?? ""} maxLength={40} disabled={busy} /></label>
+        {accountError && <p className="form-error" role="alert">{accountError}</p>}
+        <div className="row-actions"><button type="button" className="btn secondary" disabled={busy} onClick={() => { setEditingProfile(false); setAccountError(""); }}>취소</button><button className="btn" disabled={busy}>{busy ? "저장 중…" : "저장"}</button></div>
+      </form>}
+    </section>
+    <section className="panel mypage-section" aria-labelledby="learning-heading"><h2 id="learning-heading">나의 학습</h2>
+      <div className="mypage-links"><button onClick={() => navigate("today")}><span><b>학습 기록</b><small>날짜별 학습 기록을 확인하세요.</small></span><span aria-hidden="true">›</span></button><button onClick={() => navigate("review")}><span><b>오답 및 복습</b><small>틀린 문제와 글쓰기를 다시 살펴보세요.</small></span><span aria-hidden="true">›</span></button></div>
+    </section>
+    <section className="panel mypage-section preference-card" aria-labelledby="input-heading"><h2 id="input-heading">기본 입력 방식</h2><p>글쓰기와 받아쓰기에서 먼저 사용할 방식을 선택하세요.</p><InputModePicker value={preferredInputMode} onChange={savePreferredInputMode} label="기본 입력 방식" /></section>
+    <section className="panel mypage-section" aria-labelledby="account-heading"><h2 id="account-heading">계정 관리</h2>
+      <div className="mypage-links"><button disabled={busy} onClick={logout}><span><b>로그아웃</b></span><span aria-hidden="true">›</span></button><button className="mypage-danger" disabled={busy} aria-expanded={deletingAccount} aria-controls="mypage-delete-form" onClick={() => { setDeletingAccount(v => !v); setEditingProfile(false); setAccountError(""); }}><span><b>회원탈퇴</b></span><span aria-hidden="true">›</span></button></div>
+      {deletingAccount && <form id="mypage-delete-form" className="mypage-form" onSubmit={deleteAccount}><h3>정말 탈퇴하시겠어요?</h3><p>계정과 모든 학습 프로필, 글쓰기, 오답 및 학습 기록이 영구 삭제되며 복구할 수 없습니다.</p><label className="field-label">현재 비밀번호<input className="field-input" type="password" name="password" autoComplete="current-password" required disabled={busy} /></label><label className="mypage-confirm"><input type="checkbox" required disabled={busy} /> 모든 학습 기록 삭제와 회원탈퇴에 동의합니다.</label>{accountError && <p className="form-error" role="alert">{accountError}</p>}<div className="row-actions"><button type="button" className="btn secondary" disabled={busy} onClick={() => { setDeletingAccount(false); setAccountError(""); }}>취소</button><button className="btn mypage-delete-button" disabled={busy}>{busy ? "처리 중…" : "계정 영구 삭제"}</button></div></form>}
+    </section>
+  </div>;
 
   const renderReview = () => {
     const writingErrors = writing?.errors ?? [];
