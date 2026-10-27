@@ -14,7 +14,8 @@ import static org.mockito.Mockito.*;
 class LearningServiceTest {
     final QuestionAttemptRepository attempts=mock(QuestionAttemptRepository.class);
     final WritingEntryRepository writings=mock(WritingEntryRepository.class);
-    final LearningService service = new LearningService(mock(LearningQuestionRepository.class),attempts,    mock(QuestionReviewRepository.class),    mock(LearningChapterRepository.class),    mock(StudentService.class),   writings,    mock(WritingErrorRepository.class), new ObjectMapper());
+    final LearningChapterRepository chapters=mock(LearningChapterRepository.class);
+    final LearningService service=new LearningService(mock(LearningQuestionRepository.class),attempts,mock(QuestionReviewRepository.class),chapters,mock(StudentService.class),writings,mock(WritingErrorRepository.class),new ObjectMapper());
     final UUID student=UUID.randomUUID();
 
     QuestionAttempt attempt(UUID question,boolean correct,Instant time){
@@ -51,5 +52,39 @@ class LearningServiceTest {
         var history=service.history(student,"owner");
         assertEquals(1,history.size()); assertEquals(0,history.get(0).completedCount());
         assertEquals(LocalDate.now(ZoneId.of("Asia/Seoul")),history.get(0).date());
+    }
+
+    @Test void fiveCorrectAnswersDoNotCompleteTenQuestionMission(){
+        var records=java.util.stream.IntStream.range(0,5)
+            .mapToObj(i->attempt(UUID.randomUUID(),true,Instant.now())).toList();
+        when(attempts.findAllByStudentIdAndCreatedAtAfter(eq(student),any())).thenReturn(records);
+        assertFalse(service.daily(student,"owner").questionsDone());
+    }
+
+    @Test void tenDistinctCorrectAnswersCompleteMission(){
+        var records=java.util.stream.IntStream.range(0,10)
+            .mapToObj(i->attempt(UUID.randomUUID(),true,Instant.now())).toList();
+        when(attempts.findAllByStudentIdAndCreatedAtAfter(eq(student),any())).thenReturn(records);
+        assertTrue(service.daily(student,"owner").questionsDone());
+    }
+
+    @Test void chapterStartedYesterdayCountsOnCompletionDay(){
+        var today=LocalDate.now(ZoneId.of("Asia/Seoul"));
+        var chapter=new LearningChapter(null,today.minusDays(1),1);
+        var question=mock(LearningQuestion.class);
+        var questionId=UUID.randomUUID();
+        when(question.getId()).thenReturn(questionId);
+        chapter.addQuestion(question);
+        assertNull(chapter.getCompletionDate());
+        chapter.getQuestions().get(0).complete(questionId);
+        var completedAt=chapter.getQuestions().get(0).getCompletedAt();
+        chapter.getQuestions().get(0).complete(questionId);
+        assertEquals(completedAt,chapter.getQuestions().get(0).getCompletedAt());
+        when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        assertEquals(today,chapter.getCompletionDate());
+        assertTrue(service.daily(student,"owner").questionsDone());
+        var history=service.history(student,"owner");
+        assertEquals(1,history.stream().filter(day->day.date().equals(today)).findFirst().orElseThrow().chaptersCompleted());
+        assertEquals(1,history.stream().mapToInt(LearningService.DayRecord::chaptersCompleted).sum());
     }
 }

@@ -32,4 +32,5 @@ public class WritingError {
     public int getAttemptCount(){return attemptCount;} public int getHintLevelUsed(){return hintLevelUsed;} public boolean isSolved(){return solved;} public Instant getCreatedAt(){return createdAt;}
     public boolean submit(String answer){attemptCount++;solved=correct.equals(answer.trim());return solved;}
     public int nextHint(){hintLevelUsed=Math.min(3,hintLevelUsed+1);return hintLevelUsed;}
+    public void completeReview(){solved=true;}
 }

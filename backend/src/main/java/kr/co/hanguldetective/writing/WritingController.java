@@ -13,6 +13,8 @@ public class WritingController {
     public WritingController(WritingService writing){this.writing=writing;}
     public record CreateWriting(@NotBlank String text){}
     public record Attempt(@NotBlank String answer){}
+    @PostMapping("/api/writing-errors/{errorId}/review-complete") @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void completeReview(@PathVariable UUID errorId,Principal p){writing.completeReview(errorId,p.getName());}
     @PostMapping("/api/students/{studentId}/writings") @ResponseStatus(HttpStatus.CREATED) public WritingService.WritingDto create(@PathVariable UUID studentId,@Valid @RequestBody CreateWriting body,Principal p){return writing.create(studentId,p.getName(),body.text());}
     @GetMapping("/api/students/{studentId}/writings") public List<WritingService.WritingDto> list(@PathVariable UUID studentId,Principal p){return writing.list(studentId,p.getName());}
     @GetMapping("/api/writings/{writingId}") public WritingService.WritingDto get(@PathVariable UUID writingId,Principal p){return writing.get(writingId,p.getName());}

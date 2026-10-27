@@ -5,7 +5,7 @@ export type DayRecord = { date: string; questionsSolved: number; attempts: numbe
 export default function LearningNotebook({ records, onQuestions }: {
   records: DayRecord[]; onQuestions: () => void;
 }) {
-  const completedChapters = records.reduce((count, record) => count + (record.chaptersCompleted ?? (record.questionsSolved >= 5 ? 1 : 0)), 0);
+  const completedChapters = records.reduce((count, record) => count + (record.chaptersCompleted ?? (record.questionsSolved >= 10 ? 1 : 0)), 0);
   const activeIndex = completedChapters;
   const nodes = Array.from({ length: Math.max(10, activeIndex + 2) }, (_, index) => index);
 

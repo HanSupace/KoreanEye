@@ -243,7 +243,7 @@ public class LearningService implements ApplicationRunner {
         students.requireOwned(studentId,email); Instant today=LocalDate.now(ZoneId.of("Asia/Seoul")).atStartOfDay(ZoneId.of("Asia/Seoul")).toInstant();
         List<QuestionAttempt> a=attempts.findAllByStudentIdAndCreatedAtAfter(studentId,today); List<kr.co.hanguldetective.writing.WritingEntry> w=writings.findAllByStudentIdAndCreatedAtAfter(studentId,today);
         LocalDate todayDate=LocalDate.now(ZoneId.of("Asia/Seoul"));
-        boolean questionDone=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId).stream().anyMatch(chapter->chapter.getChapterDate().equals(todayDate)&&!chapter.getQuestions().isEmpty()&&chapter.isComplete())||a.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count()>=5; boolean writeDone=!w.isEmpty(); boolean reviewDone=writeDone&&w.stream().allMatch(entry->entry.getErrors().stream().allMatch(WritingError::isSolved));
+        boolean questionDone=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId).stream().anyMatch(chapter->todayDate.equals(chapter.getCompletionDate()))||a.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count()>=10; boolean writeDone=!w.isEmpty(); boolean reviewDone=writeDone&&w.stream().allMatch(entry->entry.getErrors().stream().allMatch(WritingError::isSolved));
         return new DailyDto(questionDone,writeDone,reviewDone,(questionDone?1:0)+(writeDone?1:0)+(reviewDone?1:0));
     }
     private QuestionDto toDto(LearningQuestion q,boolean correct){try{return new QuestionDto(q.getId(),q.getCategory(),q.getQuestionType(),q.getPrompt(),q.getAudioText(),mapper.readValue(q.getChoicesJson(),new TypeReference<List<String>>(){}),null,null,correct);}catch(Exception e){return new QuestionDto(q.getId(),q.getCategory(),q.getQuestionType(),q.getPrompt(),q.getAudioText(),List.of(),null,null,correct);}}
@@ -258,20 +258,29 @@ public class LearningService implements ApplicationRunner {
         var allAttempts=attempts.findAllByStudentId(studentId);
         var allWritings=writings.findAllByStudentIdOrderByCreatedAtDesc(studentId);
         Map<LocalDate,List<LearningChapter>> chapterByDate=new HashMap<>();
-        chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId).forEach(chapter->chapterByDate.computeIfAbsent(chapter.getChapterDate(),ignored->new ArrayList<>()).add(chapter));
+        var studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
+        Map<LocalDate,Integer> completedQuestionsByDate=new HashMap<>();
+        for(var chapter:studentChapters){
+            LocalDate completionDate=chapter.getCompletionDate();
+            if(completionDate!=null) chapterByDate.computeIfAbsent(completionDate,ignored->new ArrayList<>()).add(chapter);
+            for(var item:chapter.getQuestions()) if(item.isCompleted()) {
+                LocalDate date=item.getCompletedAt()==null?chapter.getChapterDate():item.getCompletedAt().atZone(zone).toLocalDate();
+                completedQuestionsByDate.merge(date,1,Integer::sum);
+            }
+        }
         Set<LocalDate> dates=new TreeSet<>(Comparator.reverseOrder());
         dates.add(LocalDate.now(zone));
         allAttempts.forEach(a->dates.add(a.getCreatedAt().atZone(zone).toLocalDate()));
         allWritings.forEach(w->dates.add(w.getCreatedAt().atZone(zone).toLocalDate()));
-        dates.addAll(chapterByDate.keySet());
+        dates.addAll(chapterByDate.keySet()); dates.addAll(completedQuestionsByDate.keySet());
         return dates.stream().map(date->{
             var dayAttempts=allAttempts.stream().filter(a->a.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
             var dayWritings=allWritings.stream().filter(w->w.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
             List<LearningChapter> dayChapters=chapterByDate.getOrDefault(date,List.of());
-            int solved=!dayChapters.isEmpty()?dayChapters.stream().mapToInt(LearningChapter::getCompletedCount).sum():(int)dayAttempts.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count();
-            int chaptersCompleted=dayChapters.isEmpty()?(solved>=5?1:0):(int)dayChapters.stream().filter(chapter->!chapter.getQuestions().isEmpty()&&chapter.isComplete()).count();
+            int solved=studentChapters.isEmpty()?(int)dayAttempts.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count():completedQuestionsByDate.getOrDefault(date,0);
+            int chaptersCompleted=studentChapters.isEmpty()?(solved>=10?1:0):dayChapters.size();
             int remaining=(int)dayWritings.stream().flatMap(w->w.getErrors().stream()).filter(e->!e.isSolved()).count();
-            int completed=(solved>=5?1:0)+(dayWritings.isEmpty()?0:1)+(dayWritings.isEmpty()||remaining>0?0:1);
+            int completed=(chaptersCompleted>0?1:0)+(dayWritings.isEmpty()?0:1)+(dayWritings.isEmpty()||remaining>0?0:1);
             return new DayRecord(date,solved,dayAttempts.size(),dayWritings.size(),remaining,completed,chaptersCompleted,dayWritings.stream().map(w->new Note(w.getId(),w.getText(),(int)w.getErrors().stream().filter(e->!e.isSolved()).count())).toList());
         }).toList();
     }
