@@ -44,6 +44,11 @@ public class WritingService {
         int spacingAccuracy=categoryAccuracy(spacingErrors),spellingAccuracy=categoryAccuracy(spellingErrors);return new WeeklyDto((int)days,ws.size(),spellingAccuracy,spacingAccuracy,weak,repeat,summary);
     }
     private void owned(WritingEntry w,String username){if(!w.getStudent().getParent().getUsername().equals(username))throw new ResponseStatusException(HttpStatus.NOT_FOUND);}
+    @Transactional public void completeReview(UUID errorId,String username){
+        WritingError error=errors.findById(errorId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));
+        owned(error.getWriting(),username);
+        error.completeReview();
+    }
     private List<String> choices(WritingError e){try{return mapper.readValue(e.getChoicesJson(),new TypeReference<>(){});}catch(Exception ignored){return List.of();}}
     private WritingDto toDto(WritingEntry w,String provider){return new WritingDto(w.getId(),w.getText(),w.getCreatedAt(),provider,w.getErrors().stream().map(e->new ErrorDto(e.getId(),e.getOriginal(),e.getCorrect(),e.getStartIndex(),e.getEndIndex(),e.getCategory(),e.getExplanation(),e.getHintLevel1(),e.getHintLevel2(),choices(e),e.getAttemptCount(),e.getHintLevelUsed(),e.isSolved())).toList());}
     private String categoryName(String c){return switch(c){case "SPACING"->"띄어쓰기";case "PRONUNCIATION_SPELLING"->"발음과 표기";case "FINAL_CONSONANT"->"받침";case "DOE_DWAE"->"돼/되";default->c;};}

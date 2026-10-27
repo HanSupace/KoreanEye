@@ -1,6 +1,7 @@
 "use client";
 import Image from "next/image";
 import LoadingIndicator from "./loading-indicator";
+import WritingReviewList from "./writing-review-list";
 import { Quests, Ranking } from "./activity-panels";
 import { NavIcon } from "./detective-art";
 
@@ -9,7 +10,7 @@ import HandwritingPad, { InputMode, InputModePicker } from "./handwriting-pad";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, Question, QuestionReviewChapter, QuestionReviewItem, Student, Writing, WritingError } from "@/lib/api";
 
-type Page = "home" | "today" | "questions" | "write" | "review" | "quests" | "ranking" | "addStudent" | "mypage";
+type Page = "home" | "today" | "questions" | "write" | "writingResult" | "review" | "quests" | "ranking" | "addStudent" | "mypage";
 type AuthResult = { token: string; username: string; expiresAt: string };
 type AttemptResult = { correct: boolean; message: string; answer?: string | null; correctExpression?: string | null; attemptCount?: number };
 type Daily = { questionsDone: boolean; writingDone: boolean; reviewDone: boolean; completedCount: number };
@@ -208,12 +209,6 @@ export default function AppShell() {
     try { await refreshStudentData(token, selected); } catch (e) { fail(e); }
   };
 
-  useEffect(() => {
-    if (page === "review" && token && student && !writing) {
-      api<Writing[]>(`/students/${student.id}/writings`, {}, token).then(items => setWriting(items[0] ?? null)).catch(fail);
-    }
-  }, [page, token, student, writing, fail]);
-
   const submitQuestion = async () => {
     if (!token || !student || !questions[qIndex] || !qSelected) return;
     const currentQuestion = questions[qIndex];
@@ -267,11 +262,15 @@ export default function AppShell() {
   };
 
   const analyzeWriting = async () => {
+    if (busy) return;
     if (!token || !student || !story.trim()) { setError("한 문장만 적어도 좋아요."); return; }
+    const selectedId = student.id;
     setBusy(true); setError("");
     try {
       const result = await api<Writing>(`/students/${student.id}/writings`, { method: "POST", body: JSON.stringify({ text: story }) }, token);
-      setWriting(result); setHints({}); setPage("review"); setStory(""); notify("내 글에서 다음 복습 학습을 만들었어요!"); await refreshStudentData(token, student);
+      if (activeStudent.current !== selectedId) return;
+      setWriting(result); setHints({}); setPage("writingResult");
+      void refreshStudentData(token, student);
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
 
@@ -318,7 +317,7 @@ export default function AppShell() {
   const openReview = async (id: string) => {
     if (!token) return;
     setBusy(true); setError("");
-    try { setWriting(await api<Writing>(`/writings/${id}`, {}, token)); setHints({}); setPage("review"); }
+    try { setWriting(await api<Writing>(`/writings/${id}`, {}, token)); setHints({}); setError(""); setPage("writingResult"); }
     catch (e) { fail(e); } finally { setBusy(false); }
   };
   const startQuestions = async () => {
@@ -345,10 +344,30 @@ export default function AppShell() {
 
   const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><label style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" />{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
 
+  const renderWritingResult = () => <div className="content">
+    <div className="section-head"><div><h1>글쓰기 분석 결과</h1><p>분석 결과를 확인하고 단서를 다시 써봐요.</p></div><span className="qcategory">단서 {writing?.errors.length ?? 0}개</span></div>
+    {writing && <>
+      <div className="panel"><p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", lineHeight: 1.9 }}>{writing.text}</p>
+        <p className="muted">분석 결과와 오류 후보가 저장되었어요. 복습 노트에서 이어서 확인할 수 있어요.</p>
+        {writing.analysisProvider === "rules" && <p className="offline-note">기본 규칙 검사 결과예요. 정해진 표현만 확인하므로 모든 맞춤법·문맥 오류를 찾지는 못해요.</p>}
+      </div>
+      {!writing.errors.length ? <div className="panel"><h2>이번 검사에서 찾은 단서가 없어요</h2><p>오류 후보는 0개예요. 검사에서 놓친 오류가 있을 수 있으니 글을 다시 읽어보세요.</p></div> : <div className="error-list">{writing.errors.map(item => <article className="error-item" key={item.id}>
+        <span className="qcategory">{categoryNames[item.category] ?? item.category}</span>
+        <p>“{item.original}” 부분을 다시 생각해 써볼까요?</p>
+        {item.solved ? <div className="feedback">복습 완료 · 수정 표현: {item.correct}</div> : <>
+          <div className="answer-row"><input id={`answer-${item.id}`} placeholder="바르게 고쳐 써보기" aria-label={`${item.original} 고쳐 쓰기`} /><button className="btn small" disabled={busy} onClick={() => { const input = document.getElementById(`answer-${item.id}`) as HTMLInputElement | null; if (input) void submitRewrite(item, input); }}>확인</button><button className="btn small secondary" disabled={busy} onClick={() => void showHint(item)}>힌트 보기</button></div>
+          {hints[item.id] && <div className="hint-box">힌트 — {hints[item.id]}</div>}
+          <p className="muted">다시 도전 {item.attemptCount}회 · 힌트 {item.hintLevelUsed}단계</p>
+        </>}
+      </article>)}</div>}
+    </>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="row-actions"><button className="btn secondary" disabled={busy} onClick={() => { setError(""); setPage("write"); }}>글 다시 보기</button><button className="btn" disabled={busy} onClick={() => setPage("review")}>복습 노트에서 확인</button></div>
+  </div>;
+
   const renderMyPage = () => <div className="content"><div className="section-head"><div><h1>마이페이지</h1><p>글쓰기와 받아쓰기에서 먼저 사용할 입력 방식을 정해요.</p></div><button className="btn secondary" onClick={() => setPage("addStudent")}>탐정 추가</button></div><section className="panel preference-card"><h2>기본 입력 방식</h2><p>언제든 글쓰기나 받아쓰기 화면에서 입력 방식을 바꿀 수 있어요.</p><InputModePicker value={preferredInputMode} onChange={savePreferredInputMode} label="기본 입력 방식" /><div className="preference-detail"><b>{preferredInputMode === "TYPE" ? "타자로 입력" : "손글씨로 입력"}</b><span>{preferredInputMode === "TYPE" ? "화면 키보드나 연결한 키보드로 써요." : "손글씨를 Google Cloud Vision으로 읽어 텍스트로 바꿔요."}</span></div></section></div>;
 
   const renderReview = () => {
-    const writingErrors = writing?.errors ?? [];
     const openQuestionReviews = questionReviewChapters.reduce((count, chapter) => count + chapter.questions.filter(question => !question.solved).length, 0);
     return <div className="content">
       <div className="section-head"><div><h1>복습 노트</h1><p>틀린 단어 문제를 챕터별로 다시 풀어봐요.</p></div><span className="qcategory">남은 문제 {openQuestionReviews}</span></div>
@@ -378,14 +397,7 @@ export default function AppShell() {
           })}</div>
         </details>)}
       </section>
-      <section className="writing-review-section">
-        <div className="archive-heading"><h2>글쓰기 복습</h2><span>{writingErrors.filter(item => item.solved).length} / {writingErrors.length} 해결</span></div>
-        {!writing ? <div className="panel">작성한 글에서 찾은 단서도 여기에 모여요.</div> : <>
-          <div className="panel"><div style={{ fontSize: 17, lineHeight: 1.9, whiteSpace: "pre-wrap" }}>{writing.text}</div>{writing.analysisProvider === "rules" && <p className="offline-note">기본 규칙 검사 결과예요. 일부 맞춤법만 확인하며, 다양한 문맥의 오류 분석은 Gemini 설정이 필요해요.</p>}</div>
-          {writingErrors.length ? <div className="error-list">{writingErrors.map(item => <div className="error-item" key={item.id}><span className="qcategory">{categoryNames[item.category] ?? item.category}</span><p style={{ fontSize: 17, fontWeight: 800, margin: "13px 0" }}>“{item.original}” 부분을 다시 생각해 써볼까요?</p>{item.solved ? <div className="feedback">잘 고쳤어요! 직접 단서를 찾았네요</div> : <><div className="answer-row"><input id={`answer-${item.id}`} placeholder="바르게 고쳐 써보기" aria-label={`${item.original} 고쳐 쓰기`} /><button className="btn small" disabled={busy} onClick={() => { const input = document.getElementById(`answer-${item.id}`) as HTMLInputElement | null; if (input) submitRewrite(item, input); }}>확인</button><button className="btn small secondary" disabled={busy} onClick={() => showHint(item)}>힌트 보기</button></div>{hints[item.id] && <div className="hint-box">힌트 — {hints[item.id]}</div>}<div className="muted" style={{ marginTop: 8 }}>다시 도전 {item.attemptCount}회 · 힌트 {item.hintLevelUsed}단계</div></>}</div>)}</div> : <div className="panel" style={{ textAlign: "center" }}><div className="completion-seal">확인 완료</div><h2>이번 검사에서 찾은 단서가 없어요</h2><p>검사에서 놓친 오류가 있을 수 있어요. 글을 다시 읽어보거나 고쳐서 재검사해 보세요.</p></div>}
-          <div className="row-actions"><button className="btn secondary" onClick={() => setPage("write")}>다음 학습 만들기</button><button className="btn green" onClick={async () => { if (token && student) try { await refreshStudentData(token, student); } catch {} setPage("today"); notify("오늘의 탐정 활동을 기록했어요!"); }}>{writingErrors.every(item => item.solved) ? "복습 마치고 노트로" : "저장하고 나중에 이어하기"}</button></div>
-        </>}
-      </section>
+      {token && student && <WritingReviewList key={student.id} token={token} studentId={student.id} categoryNames={categoryNames} onWrite={() => setPage("write")} /> }
     </div>;
   };
   if (loading) return <main><div className="content panel"><LoadingIndicator message="한글탐정대를 준비하고 있어요…" /></div></main>;
@@ -424,7 +436,7 @@ export default function AppShell() {
     </aside>
     <div className="app-main-column">
       <header className="app-topbar"><button className="mobile-menu-button" aria-label="메뉴 열기" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(v => !v)}>☰</button><div className="mobile-brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정대</div><div className="topbar-title"><span className="breadcrumb">한글탐정대</span><span className="breadcrumb-slash">/</span> {menuItems.find(item => item.id === page)?.label ?? "나의 학습"}</div><div className="topbar-right">{students.length > 1 && <label className="topbar-student">탐정<select aria-label="탐정 선택" value={student.id} onChange={e => switchStudent(e.target.value)}>{students.map(s => <option key={s.id} value={s.id}>{s.name} · 초{s.grade}</option>)}</select></label>}<span className="topbar-streak">오늘의 미션 {Number(daily.questionsDone)+Number(daily.writingDone)} / 2 완료</span><button className="logout-button" onClick={logout} aria-label={`${username} 로그아웃`}>로그아웃</button></div></header>
-      <main className="app-main-content">{(studentLoading || detailState === "loading") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel"><LoadingIndicator message="학습 기록을 불러오고 있어요…" /><p className="muted">잠시만 기다려 주세요. 글쓰기는 메뉴에서 바로 시작할 수 있어요.</p></div> : (studentLoadError || detailState === "error") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>학습 기록을 모두 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
+      <main className="app-main-content">{(studentLoading || detailState === "loading") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel"><LoadingIndicator message="학습 기록을 불러오고 있어요…" /><p className="muted">잠시만 기다려 주세요. 글쓰기는 메뉴에서 바로 시작할 수 있어요.</p></div> : (studentLoadError || detailState === "error") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>학습 기록을 모두 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "writingResult" ? renderWritingResult() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
     </div>{busy && <div className="busy-status"><LoadingIndicator message="처리하고 있어요…" /></div>}{toast && <div className="toast" role="status">{toast}</div>}{error && token && <div className="toast error-toast" role="alert" onClick={() => setError("")}>{error}　×</div>}
   </div>;
 }

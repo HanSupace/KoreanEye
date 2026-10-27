@@ -4222,3 +4222,5 @@ main {
 .preference-detail{display:grid;gap:4px;margin-top:18px;padding:14px;border-radius:12px;background:#faf6f2;color:#5c4435}
 .preference-detail span{font-size:13px;color:#8a7c72}
 @media(max-width:760px){.handwriting-canvas{height:210px}.input-mode-picker button{padding:7px 10px;font-size:12px}}
+.writing-review-fields{display:grid;gap:12px;margin:16px 0}.writing-review-fields>div{display:grid;grid-template-columns:85px minmax(0,1fr);gap:12px}.writing-review-fields dt{color:#8a7c72;font-size:13px}.writing-review-fields dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}.writing-review-item{min-width:0}
+@media(max-width:760px){.writing-review-fields>div{grid-template-columns:1fr;gap:4px}}
