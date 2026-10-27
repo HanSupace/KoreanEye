@@ -24,7 +24,7 @@ public class WritingService {
         StudentProfile student=students.requireOwned(studentId,email);
         WritingEntry writing=new WritingEntry(student,text);
         SpellCheckService.AnalysisResult analysis=spellCheck.analyze(text); int lastEnd=-1;
-        for(SpellCheckService.DetectedError e:analysis.errors()){
+        for(SpellCheckService.DetectedError e:analysis.errors().stream().sorted(Comparator.comparingInt(SpellCheckService.DetectedError::startIndex)).toList()){
             if(e.startIndex()<0||e.endIndex()>text.length()||e.startIndex()>=e.endIndex()||e.startIndex()<lastEnd)continue;
             if(!text.substring(e.startIndex(),e.endIndex()).equals(e.original())||e.correct().isBlank())continue;
             try{writing.addError(new WritingError(e.startIndex(),e.endIndex(),e.original(),e.correct(),e.category(),e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));lastEnd=e.endIndex();}catch(Exception ignored){}

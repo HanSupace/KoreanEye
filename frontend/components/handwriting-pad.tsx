@@ -1,6 +1,7 @@
 "use client";
 
 import { PointerEvent, useRef, useState } from "react";
+import LoadingIndicator from "./loading-indicator";
 
 export type InputMode = "TYPE" | "HANDWRITING";
 
@@ -53,5 +54,6 @@ export default function HandwritingPad({ onRecognize, disabled = false }: { onRe
     <canvas ref={canvasRef} className="handwriting-canvas" width={1000} height={440} aria-label="손글씨 쓰기 칸"
       onPointerDown={start} onPointerMove={move} onPointerUp={() => { drawing.current = false; }} onPointerCancel={() => { drawing.current = false; }} />
     <div className="handwriting-actions"><button type="button" className="example-btn" onClick={clear} disabled={disabled || recognizing}>지우기</button><button type="button" className="btn small" onClick={recognize} disabled={disabled || recognizing || !hasInk}>{recognizing ? "글씨를 읽고 있어요…" : "글씨를 텍스트로 바꾸기"}</button></div>
+    {recognizing && <LoadingIndicator message="글씨를 읽고 있어요…" />}
   </div>;
 }

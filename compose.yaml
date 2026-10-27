@@ -8,6 +8,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me-please-123456789}
       CORS_ORIGIN: http://localhost:3000
       AI_MODE: ${AI_MODE:-rules}
+      GOOGLE_GEMINI_API_KEY: ${GOOGLE_GEMINI_API_KEY:-}
+      GOOGLE_GEMINI_MODEL: ${GOOGLE_GEMINI_MODEL:-gemini-3.1-flash-lite}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-astra}
       GOOGLE_CLOUD_VISION_API_KEY: ${GOOGLE_CLOUD_VISION_API_KEY:-}
