@@ -10,8 +10,8 @@ public class WritingError {
     @ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name="writing_id", nullable=false) private WritingEntry writing;
     @Column(nullable=false) private int startIndex;
     @Column(nullable=false) private int endIndex;
-    @Column(nullable=false, length=100) private String original;
-    @Column(nullable=false, length=100) private String correct;
+    @Column(nullable=false, length=5000) private String original;
+    @Column(nullable=false, length=5000) private String correct;
     @Column(nullable=false, length=40) private String category;
     @Column(nullable=false, length=500) private String explanation;
     @Column(nullable=false, length=300) private String hintLevel1;

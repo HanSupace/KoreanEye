@@ -4831,3 +4831,53 @@ main {
     gap: 4px;
   }
 }
+.learning-record-loading {
+  min-height: calc(100vh - 150px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.learning-record-loading > .panel {
+  width: min(100%, 540px);
+  padding: 28px;
+  text-align: center;
+  border-radius: 22px;
+  box-shadow: 0 12px 40px #453a3314;
+}
+.learning-record-loading .loading-indicator { min-height: 110px; font-size: 17px; }
+.learning-record-loading .loading-spinner { width: 34px; height: 34px; border-width: 4px; }
+.grammar-feedback {
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: #f1f8f5;
+  border: 1px solid #d8ebe3;
+  line-height: 1.7;
+}
+.grammar-feedback p { margin: 6px 0; font-weight: 800; }
+.grammar-feedback span { color: #64594f; }
+.ranking-highlight { display: grid; grid-template-columns: minmax(130px, .7fr) 1.3fr; gap: 20px; align-items: center; }
+.ranking-me-summary { display: grid; gap: 5px; }
+.ranking-me-summary strong { font-size: 32px; color: #267d78; }
+.ranking-podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.podium-place { display: flex; min-height: 118px; flex-direction: column; align-items: center; justify-content: end; gap: 5px; padding: 12px 8px 8px; text-align: center; border-radius: 14px 14px 5px 5px; background: #f5eee5; }
+.podium-place.place-1 { min-height: 156px; background: #fff3c8; }
+.podium-place.place-2 { min-height: 132px; background: #edf1f4; }
+.podium-place.place-3 { background: #f8e9dc; }
+.podium-place.is-me { outline: 2px solid #267d78; outline-offset: 2px; }
+.podium-place > strong { font-size: 21px; }
+.podium-place small { display: inline-block; margin-left: 4px; color: #267d78; }
+.podium-medal { font-size: 21px; }
+.writing-review-groups { display: grid; gap: 12px; }
+.writing-review-group { padding: 0; overflow: hidden; }
+.writing-review-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 20px; cursor: pointer; list-style: none; }
+.writing-review-group > summary::-webkit-details-marker { display: none; }
+.writing-review-group > summary > span:first-child { display: grid; gap: 6px; min-width: 0; }
+.writing-review-group > summary b { overflow-wrap: anywhere; }
+.writing-review-group > summary small { color: #75675d; }
+.writing-review-group[open] > summary > span:last-child { transform: rotate(180deg); }
+.writing-review-group > .error-list { padding: 0 16px 16px; }
+@media (max-width: 700px) {
+  .ranking-highlight { grid-template-columns: 1fr; }
+  .podium-place { font-size: 13px; }
+  .learning-record-loading { min-height: calc(100vh - 110px); padding: 12px; }
+}

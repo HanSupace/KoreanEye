@@ -37,7 +37,7 @@ public class GeminiSpellCheckService {
                         "correct", Map.of("type", "string"),
                         "startIndex", Map.of("type", "integer"),
                         "endIndex", Map.of("type", "integer"),
-                        "category", Map.of("type", "string", "enum", List.of("SPACING", "FINAL_CONSONANT", "DOE_DWAE", "AN_ANH", "PRONUNCIATION_SPELLING", "PARTICLE", "PUNCTUATION", "CHARACTER_OMISSION", "CHARACTER_CONFUSION", "OTHER")),
+                        "category", Map.of("type", "string", "enum", List.of("SPACING", "FINAL_CONSONANT", "DOE_DWAE", "AN_ANH", "PRONUNCIATION_SPELLING", "PARTICLE", "PUNCTUATION", "CHARACTER_OMISSION", "CHARACTER_CONFUSION", "GRAMMAR_EXPRESSION", "OTHER")),
                         "explanation", Map.of("type", "string"),
                         "hintLevel1", Map.of("type", "string"),
                         "hintLevel2", Map.of("type", "string"),
@@ -47,7 +47,7 @@ public class GeminiSpellCheckService {
                 "type", "object",
                 "properties", Map.of("errors", Map.of("type", "array", "items", errorSchema)),
                 "required", List.of("errors"));
-        String systemPrompt = "초등학교 1~3학년 학생의 한국어 글에서 실제 맞춤법, 띄어쓰기, 글자 바꿔 쓰기 오류를 찾아요. 문체는 교정하지 마세요. 문장 전체의 뜻과 자연스러움을 보고, 실제로 드물게 쓰이는 낱말이라도 문맥에 맞지 않으면 아이가 쓰려던 흔한 낱말을 후보로 제안하세요. 예를 들어 사랑한다는 문맥이나 단독 표현에서 '사당해요'는 '사랑해요'를 잘못 쓴 후보로 찾아요. correct와 choices에는 표준국어대사전에 있는 표준어 또는 표준 활용형만 사용하세요. 실제로 존재하지 않는 단어, 잘못 활용한 말, 그럴듯하게 지어낸 교정 표현이나 보기를 만들지 마세요. 제안하려는 교정어와 보기의 단어가 실제 표준어인지 확신할 수 없으면 그 오류 후보를 제외하세요. 정답을 직접 말하지 않는 단계별 힌트를 만들고, 각 original이 원문에서 정확히 일치하는 인덱스를 사용하세요. 바른 표현이 문맥에 따라 여러 가지로 갈려 판단 근거가 없을 때만 후보에서 제외하세요. 학생 개인정보를 추론하지 마세요. 반드시 지정된 JSON 형식으로만 응답하세요.";
+        String systemPrompt = "초등학교 1~3학년 학생의 한국어 글을 검사해요. 맞춤법·띄어쓰기 오류는 해당 단어나 구절만 original로 잡고 표준 표기로 고쳐요. 맞춤법은 맞아도 문장 구조, 어순, 조사 사용, 호응 때문에 매우 어색하거나 뜻이 통하기 어려운 경우에는 category를 GRAMMAR_EXPRESSION으로 하고 어색한 문장 전체를 original로, 자연스러운 대체 문장 전체를 correct로 제안해요. 문체 취향이나 단순한 문장 다듬기는 지적하지 마세요. explanation에는 무엇이 어색한지와 왜 대체 표현이 자연스러운지 어린이가 이해할 설명을 써요. 맞춤법과 문법 문제가 함께 있으면 두 후보를 모두 반환하세요. 이 경우 문법 후보는 문장 전체, 맞춤법 후보는 틀린 단어만 가리켜 서로 구간이 겹쳐도 괜찮아요. 문장 전체의 뜻과 자연스러움을 보고, 실제로 드물게 쓰이는 낱말이라도 문맥에 맞지 않으면 아이가 쓰려던 흔한 낱말을 후보로 제안하세요. correct와 choices에는 표준어 또는 자연스러운 표준 문장만 사용하세요. 확신할 수 없으면 오류 후보를 제외하세요. 정답을 직접 말하지 않는 단계별 힌트를 만들고, 각 original이 원문에서 정확히 일치하는 인덱스를 사용하세요. 학생 개인정보를 추론하지 마세요. 반드시 지정된 JSON 형식으로만 응답하세요.";
         Map<String, Object> body = Map.of(
                 "systemInstruction", Map.of("parts", List.of(Map.of("text", systemPrompt))),
                 "contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", text)))),

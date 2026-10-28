@@ -17,7 +17,7 @@ public class RankingController {
     private final JdbcTemplate jdbc;
     private final StudentService students;
     public RankingController(JdbcTemplate jdbc, StudentService students) { this.jdbc=jdbc; this.students=students; }
-    public record PublicStudent(UUID id, String name) {}
+    public record PublicStudent(UUID id, String nickname) {}
     public record RankingRow(PublicStudent student, int score, int chapters, int writings, int days, int rank) {}
 
     @GetMapping
@@ -39,14 +39,14 @@ public class RankingController {
                 SELECT student_id,SUM(points) AS score,SUM(chapters) AS chapters,SUM(writings) AS writings,COUNT(DISTINCT day) AS days
                 FROM activity WHERE day BETWEEN ? AND ? GROUP BY student_id
             )
-            SELECT s.id,COALESCE(t.score,0) AS score,COALESCE(t.chapters,0) AS chapters,
+            SELECT s.id,s.nickname,COALESCE(t.score,0) AS score,COALESCE(t.chapters,0) AS chapters,
                 COALESCE(t.writings,0) AS writings,COALESCE(t.days,0) AS days,
                 RANK() OVER (ORDER BY COALESCE(t.score,0) DESC) AS position
             FROM student_profiles s LEFT JOIN totals t ON t.student_id=s.id
             ORDER BY score DESC,s.id
             """, (rs,index) -> {
                 UUID id=rs.getObject("id",UUID.class);
-                return new RankingRow(new PublicStudent(id,"탐정-"+id.toString().substring(0,8)),rs.getInt("score"),rs.getInt("chapters"),rs.getInt("writings"),rs.getInt("days"),rs.getInt("position"));
+                return new RankingRow(new PublicStudent(id,rs.getString("nickname")),rs.getInt("score"),rs.getInt("chapters"),rs.getInt("writings"),rs.getInt("days"),rs.getInt("position"));
             },java.sql.Date.valueOf(since),java.sql.Date.valueOf(today));
     }
 }

@@ -8,6 +8,8 @@ import kr.co.hanguldetective.student.StudentService;
 import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +17,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class WritingService {
+    private static final Logger log = LoggerFactory.getLogger(WritingService.class);
     private final StudentService students; private final WritingEntryRepository writings; private final WritingErrorRepository errors;
     private final SpellCheckService spellCheck; private final ObjectMapper mapper; private final QuestionAttemptRepository attempts;
     public WritingService(StudentService students,WritingEntryRepository writings,WritingErrorRepository errors,SpellCheckService spellCheck,ObjectMapper mapper,QuestionAttemptRepository attempts){this.students=students;this.writings=writings;this.errors=errors;this.spellCheck=spellCheck;this.mapper=mapper;this.attempts=attempts;}
@@ -23,12 +26,34 @@ public class WritingService {
         if(text.length()>5000)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"글은 5,000자까지 쓸 수 있어요.");
         StudentProfile student=students.requireOwned(studentId,email);
         WritingEntry writing=new WritingEntry(student,text);
-        SpellCheckService.AnalysisResult analysis=spellCheck.analyze(text); int lastEnd=-1;
+        SpellCheckService.AnalysisResult analysis=spellCheck.analyze(text);
+        int acceptedCandidates=0;
+        int droppedCandidates=0;
         for(SpellCheckService.DetectedError e:analysis.errors().stream().sorted(Comparator.comparingInt(SpellCheckService.DetectedError::startIndex)).toList()){
-            if(e.startIndex()<0||e.endIndex()>text.length()||e.startIndex()>=e.endIndex()||e.startIndex()<lastEnd)continue;
-            if(!text.substring(e.startIndex(),e.endIndex()).equals(e.original())||e.correct().isBlank())continue;
-            try{writing.addError(new WritingError(e.startIndex(),e.endIndex(),e.original(),e.correct(),e.category(),e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));lastEnd=e.endIndex();}catch(Exception ignored){}
+            if(e.startIndex()<0||e.endIndex()>text.length()||e.startIndex()>=e.endIndex()){
+                droppedCandidates++;
+                log.warn("Writing analysis candidate dropped: provider={}, reason=INVALID_RANGE, category={}, startIndex={}, endIndex={}, sourceLength={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex(),text.length());
+                continue;
+            }
+            if(!text.substring(e.startIndex(),e.endIndex()).equals(e.original())){
+                droppedCandidates++;
+                log.warn("Writing analysis candidate dropped: provider={}, reason=SOURCE_MISMATCH, category={}, startIndex={}, endIndex={}, sourceLength={}, candidateLength={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex(),text.length(),e.original().length());
+                continue;
+            }
+            if(e.correct().isBlank()){
+                droppedCandidates++;
+                log.warn("Writing analysis candidate dropped: provider={}, reason=EMPTY_CORRECTION, category={}, startIndex={}, endIndex={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex());
+                continue;
+            }
+            try{
+                writing.addError(new WritingError(e.startIndex(),e.endIndex(),e.original(),e.correct(),e.category(),e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));
+                acceptedCandidates++;
+            }catch(Exception ex){
+                droppedCandidates++;
+                log.warn("Writing analysis candidate dropped: provider={}, reason=PERSISTENCE_ERROR, category={}, exceptionType={}",analysis.provider(),e.category(),ex.getClass().getSimpleName());
+            }
         }
+        log.info("Writing analysis completed: provider={}, candidates={}, accepted={}, dropped={}",analysis.provider(),analysis.errors().size(),acceptedCandidates,droppedCandidates);
         return toDto(writings.save(writing),analysis.provider());
     }
     @Transactional(readOnly=true) public WritingDto get(UUID writingId,String email){WritingEntry w=writings.findById(writingId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));owned(w,email);return toDto(w,"stored");}

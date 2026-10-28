@@ -21,7 +21,7 @@ export function Quests({ records, reviewDone, onQuestions, onWrite, onReview }: 
     <div className="activity-quests">{quests.map((quest, index) => <section className={`panel activity-quest ${quest.done ? "is-done" : ""}`} key={quest.title}><span className="quest-number">{quest.done ? "✓" : `0${index + 1}`}</span><div><h2>{quest.title}</h2><p>{quest.description}</p><progress aria-label={`${quest.title} 진행률`} value={quest.done ? quest.total : quest.progress} max={quest.total} /><small>{quest.done ? "완료" : `${quest.progress} / ${quest.total}`}</small></div><button className="btn small secondary" onClick={quest.action}>{quest.done ? "더 연습하기" : quest.label}</button></section>)}</div></div>;
 }
 
-type RankingRow = { student: { id: string; name: string }; score: number; chapters: number; writings: number; days: number; rank: number };
+type RankingRow = { student: { id: string; nickname: string | null }; score: number; chapters: number; writings: number; days: number; rank: number };
 export function Ranking({ token, selectedId }: { token: string; selectedId: string }) {
   const [period, setPeriod] = useState<"week" | "all">("week");
   const [rows, setRows] = useState<RankingRow[]>([]);
@@ -39,12 +39,13 @@ export function Ranking({ token, selectedId }: { token: string; selectedId: stri
   }, [token, selectedId, period, retry]);
   const myRow = rows.find(row => row.student.id === selectedId);
   const rankOf = (score: number) => rows.find(row => row.score === score)?.rank ?? 1;
-  return <div className="content"><div className="section-head"><div><h1>전체 탐정 랭킹</h1><p>다른 계정의 탐정들과 함께 도전해요. 이름 대신 탐정 번호로 표시해요.</p></div></div>
+  const podium = [2, 1, 3].map(rank => rows.find(row => row.rank === rank)).filter((row): row is RankingRow => !!row);
+  return <div className="content"><div className="section-head"><div><h1>전체 탐정 랭킹</h1><p>다른 계정의 탐정들과 함께 도전해요.</p></div></div>
     <div className="ranking-period" role="group" aria-label="랭킹 기간"><button aria-pressed={period === "week"} onClick={() => setPeriod("week")}>최근 7일</button><button aria-pressed={period === "all"} onClick={() => setPeriod("all")}>전체 기록</button></div>
     <p className="muted">챕터 완료 100점 · 글쓰기 1편 30점 · 동점은 공동 순위</p>
     {loading ? <div className="panel"><LoadingIndicator message="탐정들의 기록을 모으고 있어요…" /></div> : error ? <div className="panel" role="alert"><p>{error}</p><button className="btn" onClick={() => setRetry(value => value + 1)}>다시 불러오기</button></div> : <>
-      {myRow && <div className="panel ranking-highlight"><span>나의 순위</span><strong>{rankOf(myRow.score)}위</strong><span>{myRow.score.toLocaleString()}점 · 활동 {myRow.days}일</span></div>}
-      <div className="panel ranking-table-wrap"><table className="ranking-table"><caption>{period === "week" ? "최근 7일" : "전체"} 탐정 활동 순위</caption><thead><tr><th scope="col">순위</th><th scope="col">탐정</th><th scope="col">완료 챕터</th><th scope="col">글쓰기</th><th scope="col">점수</th></tr></thead><tbody>{rows.map(row => <tr key={row.student.id} className={row.student.id === selectedId ? "is-me" : ""}><td>{rankOf(row.score)}</td><th scope="row">{row.student.name}{row.student.id === selectedId && <small> 나</small>}</th><td>{row.chapters}</td><td>{row.writings}</td><td>{row.score.toLocaleString()}</td></tr>)}</tbody></table></div>
+      {myRow && <section className="panel ranking-highlight" aria-label="나의 순위"><div className="ranking-me-summary"><span>나의 순위</span><strong>{rankOf(myRow.score)}위</strong><span>{myRow.score.toLocaleString()}점 · 활동 {myRow.days}일</span></div><div className="ranking-podium">{podium.map(row => <div key={row.student.id} className={`podium-place place-${row.rank} ${row.student.id === selectedId ? "is-me" : ""}`}><span className="podium-medal" aria-hidden="true">{row.rank === 1 ? "👑" : row.rank === 2 ? "🥈" : "🥉"}</span><b>{row.student.nickname || "이름 없음"}{row.student.id === selectedId && <small> 나</small>}</b><span>{row.score.toLocaleString()}점</span><strong>{row.rank}</strong></div>)}</div></section>}
+      <div className="panel ranking-table-wrap"><table className="ranking-table"><caption>{period === "week" ? "최근 7일" : "전체"} 탐정 활동 순위</caption><thead><tr><th scope="col">순위</th><th scope="col">탐정</th><th scope="col">완료 챕터</th><th scope="col">글쓰기</th><th scope="col">점수</th></tr></thead><tbody>{rows.map(row => <tr key={row.student.id} className={row.student.id === selectedId ? "is-me" : ""}><td>{rankOf(row.score)}</td><th scope="row">{row.student.nickname || "이름 없음"}{row.student.id === selectedId && <small> 나</small>}</th><td>{row.chapters}</td><td>{row.writings}</td><td>{row.score.toLocaleString()}</td></tr>)}</tbody></table></div>
       {rows.every(row => row.score === 0) && <p className="panel">아직 점수가 없어요. 첫 챕터나 글쓰기를 완료해 보세요!</p>}{rows.length === 1 && <p className="muted">현재 등록된 탐정은 한 명이에요. 나의 활동 점수를 쌓아보세요.</p>}
     </>}
   </div>;
