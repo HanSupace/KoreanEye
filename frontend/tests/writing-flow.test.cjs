@@ -8,17 +8,20 @@ const path = require('node:path');
 function harness(file, initial, api) {
   const values = initial.slice();
   let cursor = 0;
+  let refCursor = 0;
+  const refs = [];
+  const inputs = new Map();
   const effects = [];
   const hooks = {
     useState(value) { const i = cursor++; if (!(i in values)) values[i] = value; return [values[i], next => { values[i] = typeof next === 'function' ? next(values[i]) : next; }]; },
-    useRef: value => ({ current: value }), useCallback: fn => fn,
+    useRef(value) { const i = refCursor++; return refs[i] ??= { current: value }; }, useCallback: fn => fn,
     useEffect: fn => effects.push(fn),
   };
   const filename = path.join(__dirname, '../components', file);
   const source = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const exports = {};
   vm.runInNewContext(source, {
-    exports, AbortController,
+    exports, AbortController, Error, document: { getElementById: id => inputs.get(id) },
     require(name) {
       if (name === '@/lib/profanity') return loadProfanity();
       if (name === 'react') return hooks;
@@ -27,7 +30,7 @@ function harness(file, initial, api) {
       return new Proxy({}, { get: () => () => null });
     },
   }, { filename });
-  return { values, effects, render(props = {}) { cursor = 0; effects.length = 0; return exports.default(props); } };
+  return { values, effects, inputs, render(props = {}) { cursor = 0; refCursor = 0; effects.length = 0; return exports.default(props); } };
 }
 function find(node, predicate) {
   if (Array.isArray(node)) { for (const child of node) { const hit = find(child, predicate); if (hit) return hit; } }
@@ -67,7 +70,8 @@ test('analysis failure keeps writing page and full input, with visible error', a
   await find(h.render(), n => n.type === 'button' && text(n) === '단서 찾기').props.onClick();
   assert.equal(h.values[4], 'write');
   assert.equal(h.values[23], input);
-  assert.ok(find(h.render(), n => n.props?.role === 'alert'));
+  assert.ok(find(h.render(), n => n.props?.kind === 'error' && n.props?.title));
+  assert.ok(find(h.render(), n => n.type === 'button' && text(n) === '다시 시도'));
 });
 
 test('zero errors displays a real empty analysis result', async () => {
@@ -159,4 +163,110 @@ test('consonants do not turn ordinary Korean words into profanity', () => {
   for (const prefix of ['', ...prefixes]) {
     for (const word of normal) assert.equal(filter.containsProfanity(prefix + word), false, prefix + word);
   }
+});
+
+test('question success waits for next action and suppresses corner loading', async () => {
+  let resolve;
+  const h = shell(() => new Promise(done => { resolve = done; }));
+  h.values[4] = 'questions'; h.values[15] = [{ id: 'q1', choices: ['a', 'b'] }, { id: 'q2', choices: [] }]; h.values[21] = 'a';
+  const exercise = find(h.render(), n => n.props?.onSubmit && n.props?.onNext);
+  const pending = exercise.props.onSubmit();
+  assert.equal(find(h.render(), n => n.props?.kind === 'loading').props.kind, 'loading');
+  assert.equal(find(h.render(), n => n.props?.className === 'busy-status'), undefined);
+  resolve({ correct: true, message: 'correct' }); await pending;
+  assert.equal(h.values[20], 0);
+  const modal = find(h.render(), n => n.props?.kind === 'success');
+  find(modal, n => n.type === 'button').props.onClick();
+  assert.equal(h.values[20], 1);
+  assert.equal(h.values[22], null);
+});
+
+test('wrong answer retry keeps question and does not advance completion', async () => {
+  const h = shell(async () => ({ correct: false, message: 'wrong' }));
+  h.values[4] = 'questions'; h.values[15] = [{ id: 'q1', choices: ['a', 'b'] }]; h.values[21] = 'a';
+  await find(h.render(), n => n.props?.onSubmit).props.onSubmit();
+  const modal = find(h.render(), n => n.props?.kind === 'failure');
+  find(modal, n => n.type === 'button' && n.props.className === 'btn secondary').props.onClick();
+  assert.equal(h.values[20], 0); assert.equal(h.values[22], null); assert.equal(h.values[4], 'questions');
+});
+
+function rewriteShell(api) {
+  const h = shell(api);
+  h.values[4] = 'writingResult';
+  h.values[24] = { ...writing, errors: [
+    { ...writing.errors[0], attemptCount: 0, hintLevelUsed: 1 },
+    { id: 'second-error', original: '집에와서', correct: '집에 와서', solved: false, attemptCount: 0, hintLevelUsed: 0 },
+  ] };
+  h.inputs.set('answer-error-id', { value: '같이', focus() { this.focused = true; } });
+  h.inputs.set('answer-second-error', { value: '집에 와서', focus() {} });
+  return h;
+}
+const confirmRewrite = h => find(h.render(), n => n.type === 'button' && text(n) === '확인');
+const modalOf = (h, kind) => find(h.render(), n => n.props?.kind === kind);
+
+test('writing rewrite loading blocks duplicate requests; success waits for confirmation and preserves other errors', async () => {
+  let resolve;
+  let posts = 0;
+  const h = rewriteShell((url, options) => options?.method === 'POST'
+    ? (posts++, new Promise(done => { resolve = done; })) : Promise.resolve([]));
+  const submit = confirmRewrite(h).props.onClick;
+  submit();
+  confirmRewrite(h).props.onClick();
+  assert.equal(posts, 1);
+  assert.equal(modalOf(h, 'loading').props.title, '정답을 확인하고 있어요...');
+  assert.equal(find(h.render(), n => n.props?.className === 'busy-status'), undefined);
+  resolve({ correct: true, attemptCount: 1 });
+  await new Promise(done => setImmediate(done));
+  assert.equal(modalOf(h, 'success').props.message, '복습을 완료했어요.');
+  assert.equal(h.values[24].errors[0].solved, false);
+  find(modalOf(h, 'success'), n => n.type === 'button').props.onClick();
+  assert.equal(h.values[24].errors[0].solved, true);
+  assert.equal(h.values[24].errors[0].attemptCount, 1);
+  assert.equal(h.values[24].errors[0].hintLevelUsed, 1);
+  assert.equal(h.values[24].errors[1].solved, false);
+  confirmRewrite(h).props.onClick();
+  assert.equal(posts, 2);
+  resolve({ correct: true, attemptCount: 1 });
+  await new Promise(done => setImmediate(done));
+  find(modalOf(h, 'success'), n => n.type === 'button').props.onClick();
+  assert.ok(h.values[24].errors.every(error => error.solved));
+});
+
+test('writing rewrite wrong answer keeps input, updates attempts and offers retry without skipping', async () => {
+  const h = rewriteShell(async () => ({ correct: false, attemptCount: 3 }));
+  h.inputs.get('answer-error-id').value = '가치';
+  confirmRewrite(h).props.onClick();
+  await new Promise(done => setImmediate(done));
+  assert.equal(modalOf(h, 'failure').props.message, '표현을 다시 생각해 보세요.');
+  assert.equal(h.values[24].errors[0].solved, false);
+  assert.equal(h.values[24].errors[0].attemptCount, 3);
+  assert.equal(h.values[24].errors[0].hintLevelUsed, 1);
+  const retry = find(modalOf(h, 'failure'), n => n.type === 'button');
+  assert.equal(text(retry), '다시 풀기');
+  retry.props.onClick();
+  assert.equal(modalOf(h, 'failure'), undefined);
+  assert.equal(h.inputs.get('answer-error-id').value, '가치');
+  assert.equal(h.values[4], 'writingResult');
+});
+
+test('writing rewrite network error preserves state and retries through the existing modal', async () => {
+  let posts = 0;
+  const h = rewriteShell(async (url, options) => {
+    if (options?.method !== 'POST') return [];
+    posts++;
+    if (posts === 1) throw new Error('connection failed');
+    return { correct: true, attemptCount: 1 };
+  });
+  confirmRewrite(h).props.onClick();
+  await new Promise(done => setImmediate(done));
+  assert.equal(modalOf(h, 'error').props.message, 'connection failed');
+  assert.equal(h.values[24].errors[0].solved, false);
+  assert.equal(h.values[24].errors[0].attemptCount, 0);
+  assert.equal(h.inputs.get('answer-error-id').value, '같이');
+  find(modalOf(h, 'error'), n => n.type === 'button' && text(n) === '다시 시도').props.onClick();
+  await new Promise(done => setImmediate(done));
+  assert.equal(posts, 2);
+  assert.ok(modalOf(h, 'success'));
+  find(modalOf(h, 'success'), n => n.type === 'button').props.onClick();
+  assert.equal(h.values[24].errors[0].solved, true);
 });

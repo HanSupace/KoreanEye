@@ -30,7 +30,13 @@ public class WritingService {
         SpellCheckService.AnalysisResult analysis=spellCheck.analyze(text);
         int acceptedCandidates=0;
         int droppedCandidates=0;
-        for(SpellCheckService.DetectedError e:analysis.errors().stream().sorted(Comparator.comparingInt(SpellCheckService.DetectedError::startIndex)).toList()){
+        Set<String> acceptedKeys=new HashSet<>();
+        for(SpellCheckService.DetectedError e:analysis.errors().stream().filter(Objects::nonNull).sorted(Comparator.comparingInt(SpellCheckService.DetectedError::startIndex)).toList()){
+            if(!WritingCandidateValidator.hasCorrection(e.original(),e.correct())){
+                droppedCandidates++;
+                log.info("Writing analysis candidate ignored: provider={}, reason=NO_CORRECTION, startIndex={}, endIndex={}",analysis.provider(),e.startIndex(),e.endIndex());
+                continue;
+            }
             if("PUNCTUATION".equals(e.category())){
                 droppedCandidates++;
                 log.info("Writing analysis candidate ignored: provider={}, reason=PUNCTUATION, startIndex={}, endIndex={}",analysis.provider(),e.startIndex(),e.endIndex());
@@ -39,7 +45,7 @@ public class WritingService {
             int startIndex=e.startIndex();
             int endIndex=e.endIndex();
             if(startIndex<0||endIndex>text.length()||startIndex>=endIndex||!text.substring(startIndex,endIndex).equals(e.original())){
-                int correctedStart=findNearestOccurrence(text,e.original(),e.startIndex());
+                int correctedStart=findUniqueOccurrence(text,e.original());
                 if(correctedStart>=0){
                     startIndex=correctedStart;
                     endIndex=correctedStart+e.original().length();
@@ -61,8 +67,14 @@ public class WritingService {
                 log.warn("Writing analysis candidate dropped: provider={}, reason=EMPTY_CORRECTION, category={}, startIndex={}, endIndex={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex());
                 continue;
             }
+            String category=WritingCandidateValidator.spacingOnly(e.original(),e.correct())?"SPACING":e.category();
+            if("SPACING".equals(category)&&!WritingCandidateValidator.spacingOnly(e.original(),e.correct())){
+                droppedCandidates++;
+                continue;
+            }
+            if(!acceptedKeys.add(startIndex+":"+endIndex+":"+e.correct())){droppedCandidates++;continue;}
             try{
-                writing.addError(new WritingError(startIndex,endIndex,e.original(),e.correct(),e.category(),e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));
+                writing.addError(new WritingError(startIndex,endIndex,e.original(),e.correct(),category,e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));
                 acceptedCandidates++;
             }catch(Exception ex){
                 droppedCandidates++;
@@ -72,15 +84,10 @@ public class WritingService {
         log.info("Writing analysis completed: provider={}, candidates={}, accepted={}, dropped={}",analysis.provider(),analysis.errors().size(),acceptedCandidates,droppedCandidates);
         return toDto(writings.save(writing),analysis.provider());
     }
-    private int findNearestOccurrence(String text,String original,int suggestedStart){
+    private int findUniqueOccurrence(String text,String original){
         if(original==null||original.isBlank())return -1;
-        int bestIndex=-1;
-        int bestDistance=Integer.MAX_VALUE;
-        for(int index=text.indexOf(original);index>=0;index=text.indexOf(original,index+1)){
-            int distance=Math.abs(index-suggestedStart);
-            if(distance<bestDistance){bestIndex=index;bestDistance=distance;}
-        }
-        return bestIndex;
+        int index=text.indexOf(original);
+        return index>=0&&text.indexOf(original,index+1)<0?index:-1;
     }
     @Transactional(readOnly=true) public WritingDto get(UUID writingId,String email){WritingEntry w=writings.findById(writingId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));owned(w,email);return toDto(w,"stored");}
     @Transactional(readOnly=true) public List<WritingDto> list(UUID studentId,String email){students.requireOwned(studentId,email);return writings.findAllByStudentIdOrderByCreatedAtDesc(studentId).stream().map(w->toDto(w,"stored")).toList();}

@@ -273,12 +273,14 @@ public class LearningService implements ApplicationRunner {
         allAttempts.forEach(a->dates.add(a.getCreatedAt().atZone(zone).toLocalDate()));
         allWritings.forEach(w->dates.add(w.getCreatedAt().atZone(zone).toLocalDate()));
         dates.addAll(chapterByDate.keySet()); dates.addAll(completedQuestionsByDate.keySet());
+        LocalDate firstChapterDate=studentChapters.stream().map(LearningChapter::getCreatedAt).map(time->time.atZone(zone).toLocalDate()).min(LocalDate::compareTo).orElse(null);
         return dates.stream().map(date->{
             var dayAttempts=allAttempts.stream().filter(a->a.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
             var dayWritings=allWritings.stream().filter(w->w.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
             List<LearningChapter> dayChapters=chapterByDate.getOrDefault(date,List.of());
-            int solved=studentChapters.isEmpty()?(int)dayAttempts.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count():completedQuestionsByDate.getOrDefault(date,0);
-            int chaptersCompleted=studentChapters.isEmpty()?(solved>=10?1:0):dayChapters.size();
+            boolean legacyDay=firstChapterDate==null||date.isBefore(firstChapterDate);
+            int solved=legacyDay?(int)dayAttempts.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count():completedQuestionsByDate.getOrDefault(date,0);
+            int chaptersCompleted=legacyDay?(solved>=10?1:0):dayChapters.size();
             int remaining=(int)dayWritings.stream().flatMap(w->w.getErrors().stream()).filter(e->!e.isSolved()).count();
             int completed=(chaptersCompleted>0?1:0)+(dayWritings.isEmpty()?0:1)+(dayWritings.isEmpty()||remaining>0?0:1);
             return new DayRecord(date,solved,dayAttempts.size(),dayWritings.size(),remaining,completed,chaptersCompleted,dayWritings.stream().map(w->new Note(w.getId(),w.getText(),(int)w.getErrors().stream().filter(e->!e.isSolved()).count())).toList());

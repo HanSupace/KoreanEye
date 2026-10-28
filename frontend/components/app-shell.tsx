@@ -2,6 +2,7 @@
 import Image from "next/image";
 import { containsProfanity, profanityTitle, profanityMessage } from "@/lib/profanity";
 import LoadingIndicator from "./loading-indicator";
+import ActivityModal from "./activity-modal";
 import WritingReviewList from "./writing-review-list";
 import { Quests, Ranking } from "./activity-panels";
 import { NavIcon } from "./detective-art";
@@ -110,6 +111,12 @@ export default function AppShell() {
   const [editingProfile, setEditingProfile] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [accountError, setAccountError] = useState("");
+
+  const [modal, setModal] = useState<{ kind: "loading" | "success" | "failure" | "error"; title: string; message?: string; retry?: () => void; action?: { label: string; run: () => void } } | null>(null);
+  const writingRequest = useRef(false);
+  const skipRequest = useRef(false);
+  const rewriteRequest = useRef(false);
+  const modalError = (e: unknown, retry: () => void) => setModal({ kind: "error", title: "잠시 문제가 생겼어요", message: e instanceof Error ? e.message : "연결을 확인하고 다시 시도해 주세요.", retry });
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (!token || !student) return;
@@ -239,7 +246,7 @@ export default function AppShell() {
   };
 
   const submitQuestion = async () => {
-    if (!token || !student || !questions[qIndex] || !qSelected || answerRequest.current) return;
+    if (!token || !student || !questions[qIndex] || !qSelected || qResult || answerRequest.current) return;
     const currentQuestion = questions[qIndex];
     if (offlineQuestions) {
       const correct = currentQuestion.answer === qSelected;
@@ -248,13 +255,15 @@ export default function AppShell() {
       return;
     }
     answerRequest.current = true; setBusy(true); setError("");
+    setModal({ kind: "loading", title: "정답을 확인하고 있어요..." });
     try {
       const result = await api<AttemptResult>(`/questions/${currentQuestion.id}/attempt`, { method: "POST", body: JSON.stringify({ studentId: student.id, answer: qSelected }) }, token);
       setQResult(result);
+      setModal(result.correct ? { kind: "success", title: "정답이에요!", message: "멋지게 단서를 찾았어요!" } : { kind: "failure", title: "다시 도전해 봐요!", message: "조금만 더 생각해 볼까요?" });
       if (result.correct) {
         setQuestions(items => items.map(item => item.id === currentQuestion.id ? { ...item, correct: true } : item));
       }
-    } catch (e) { fail(e); } finally { answerRequest.current = false; setBusy(false); }
+    } catch (e) { modalError(e, submitQuestion); } finally { answerRequest.current = false; setBusy(false); }
   };
 
   const submitQuestionReview = async (item: QuestionReviewItem) => {
@@ -273,35 +282,39 @@ export default function AppShell() {
   };
 
   const nextQuestion = () => {
-    if (qIndex >= questions.length - 1) { setPage("today"); setQIndex(0); setQResult(null); setQSelected(""); if (token && student) void refreshStudentData(token, student); notify("챕터를 마쳤어요! 다음 챕터가 열렸어요."); return; }
+    setModal(null);
+    if (qIndex >= questions.length - 1) { setPage("today"); setQIndex(0); setQResult(null); setQSelected(""); if (token && student) void refreshStudentData(token, student); notify("이번 문제 풀이를 마쳤어요. 학습 기록을 확인해 보세요."); return; }
     setQIndex(n => n + 1); setQResult(null); setQSelected("");
   };
 
   const skipQuestion = async () => {
-    if (!token || !student || !questions[qIndex] || busy) return;
+    if (!token || !student || !questions[qIndex] || busy || skipRequest.current) return;
     if (offlineQuestions) { setError("복습 노트에 저장하려면 인터넷 연결이 필요해요."); return; }
-    setBusy(true); setError("");
+    skipRequest.current = true; setBusy(true); setError("");
+    setModal({ kind: "loading", title: "복습 노트에 담고 있어요..." });
     try {
       await api<void>(`/questions/${questions[qIndex].id}/skip`, { method: "POST", body: JSON.stringify({ studentId: student.id }) }, token);
       await refreshStudentData(token, student, true);
       notify("이 문제를 복습 노트에 담았어요.");
       nextQuestion();
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) { modalError(e, skipQuestion); } finally { skipRequest.current = false; setBusy(false); }
   };
 
   const profanityBlocked = containsProfanity(story);
   const analyzeWriting = async () => {
     if (containsProfanity(story)) return;
-    if (busy) return;
+    if (busy || writingRequest.current) return;
     if (!token || !student || !story.trim()) { setError("한 문장만 적어도 좋아요."); return; }
     const selectedId = student.id;
+    writingRequest.current = true;
     setBusy(true); setError("");
+    setModal({ kind: "loading", title: "글 속 단서를 찾고 있어요..." });
     try {
       const result = await api<Writing>(`/students/${student.id}/writings`, { method: "POST", body: JSON.stringify({ text: story }) }, token);
       if (activeStudent.current !== selectedId) return;
-      setWriting(result); setHints({}); setPage("writingResult");
+      setModal(null); setWriting(result); setHints({}); setPage("writingResult");
       void refreshStudentData(token, student);
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) { modalError(e, analyzeWriting); } finally { writingRequest.current = false; setBusy(false); }
   };
 
   const recognizeHandwriting = async (image: string) => {
@@ -323,12 +336,27 @@ export default function AppShell() {
   };
 
   const submitRewrite = async (errorItem: WritingError, input: HTMLInputElement) => {
-    if (!token || !writing) return; setBusy(true);
+    if (!token || !writing || errorItem.solved || busy || rewriteRequest.current) return;
+    rewriteRequest.current = true;
+    const writingId = writing.id;
+    const studentId = student?.id;
+    setBusy(true); setError("");
+    setModal({ kind: "loading", title: "정답을 확인하고 있어요..." });
     try {
       const result = await api<AttemptResult>(`/writing-errors/${errorItem.id}/attempt`, { method: "POST", body: JSON.stringify({ answer: input.value }) }, token);
-      setWriting(w => w ? { ...w, errors: w.errors.map(e => e.id === errorItem.id ? { ...e, attemptCount: result.attemptCount ?? e.attemptCount + 1, solved: result.correct } : e) } : w);
-      if (result.correct) { notify("정답이에요! 스스로 잘 찾아냈어요"); if (student) await refreshStudentData(token, student); } else notify("거의 맞았어요. 힌트를 보고 다시 해봐요!");
-    } catch (e) { fail(e); } finally { setBusy(false); }
+      if (activeStudent.current !== studentId) return;
+      const applyResult = () => setWriting(w => w?.id === writingId ? { ...w, errors: w.errors.map(e => e.id === errorItem.id ? { ...e, attemptCount: result.attemptCount ?? e.attemptCount + 1, solved: result.correct } : e) } : w);
+      if (result.correct) {
+        setModal({ kind: "success", title: "정답이에요!", message: "복습을 완료했어요.", action: { label: "확인", run: () => {
+          applyResult(); setModal(null);
+          if (student) void refreshStudentData(token, student);
+        } } });
+      } else {
+        applyResult();
+        setModal({ kind: "failure", title: "다시 도전해 봐요!", message: "표현을 다시 생각해 보세요.", action: { label: "다시 풀기", run: () => { setModal(null); input.focus(); } } });
+      }
+    } catch (e) { modalError(e, () => void submitRewrite(errorItem, input)); }
+    finally { rewriteRequest.current = false; setBusy(false); }
   };
 
   const showHint = async (item: WritingError) => {
@@ -342,7 +370,7 @@ export default function AppShell() {
 
   const renderAddStudent = () => <div className="content"><div className="section-head"><div><h1>탐정 프로필 만들기</h1><p>아이의 이름과 학년만 적어주세요.</p></div><button className="logout-button" onClick={logout}>로그아웃</button></div><form className="panel" onSubmit={createStudent} style={{ maxWidth: 520, marginInline: "auto" }}><label className="field-label">이름<input className="field-input" name="name" required maxLength={40} placeholder="민수" /></label><label className="field-label">학년<select className="field-input" name="grade" defaultValue="2"><option value="1">초등학교 1학년</option><option value="2">초등학교 2학년</option><option value="3">초등학교 3학년</option></select></label><label className="field-label">별명 <span className="muted">(선택)</span><input className="field-input" name="nickname" maxLength={40} placeholder="꼬마 탐정" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="btn" disabled={busy}>{busy ? "저장 중…" : "프로필 저장"}</button></form></div>;
 
-  const renderAuth = () => <main className="auth-page"><div className="auth-card"><div className="auth-brand"><span className="auth-mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span><span>한글탐정대</span></div><div className="auth-heading"><span className="auth-kicker">탐정 본부</span><h1>{authMode === "login" ? "다시 만나 반가워요" : "새 탐정 대원을 맞이해요"}</h1></div><div className="auth-tabs" role="tablist" aria-label="로그인 또는 회원가입"><button type="button" role="tab" aria-selected={authMode === "login"} className={authMode === "login" ? "selected" : ""} onClick={() => { setAuthMode("login"); setError(""); }}>로그인</button><button type="button" role="tab" aria-selected={authMode === "signup"} className={authMode === "signup" ? "selected" : ""} onClick={() => { setAuthMode("signup"); setError(""); }}>회원가입</button></div><form className="auth-form" onSubmit={authenticate}><label className="field-label">아이디<input className="field-input" type="text" name="username" autoComplete="username" required placeholder="사용할 아이디를 입력해 주세요" /></label><label className="field-label">비밀번호<input className="field-input" type="password" name="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required placeholder="비밀번호를 입력해 주세요" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="btn auth-submit" disabled={busy}>{busy ? <LoadingIndicator message="확인하고 있어요…" /> : authMode === "login" ? "탐정 본부 들어가기" : "탐정 계정 만들기"}</button></form><p className="auth-footnote">학습 기록은 로그인한 탐정 계정에 안전하게 저장돼요.</p></div></main>;
+  const renderAuth = () => <main className="auth-page"><div className="auth-card"><div className="auth-brand"><span className="auth-mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span><span>한글탐정단</span></div><div className="auth-heading"><span className="auth-kicker">탐정 본부</span><h1>{authMode === "login" ? "다시 만나 반가워요" : "새 탐정 대원을 맞이해요"}</h1></div><div className="auth-tabs" role="tablist" aria-label="로그인 또는 회원가입"><button type="button" role="tab" aria-selected={authMode === "login"} className={authMode === "login" ? "selected" : ""} onClick={() => { setAuthMode("login"); setError(""); }}>로그인</button><button type="button" role="tab" aria-selected={authMode === "signup"} className={authMode === "signup" ? "selected" : ""} onClick={() => { setAuthMode("signup"); setError(""); }}>회원가입</button></div><form className="auth-form" onSubmit={authenticate}><label className="field-label">아이디<input className="field-input" type="text" name="username" autoComplete="username" required placeholder="사용할 아이디를 입력해 주세요" /></label><label className="field-label">비밀번호<input className="field-input" type="password" name="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required placeholder="비밀번호를 입력해 주세요" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="btn auth-submit" disabled={busy}>{busy ? <LoadingIndicator message="확인하고 있어요…" /> : authMode === "login" ? "탐정 본부 들어가기" : "탐정 계정 만들기"}</button></form><p className="auth-footnote">학습 기록은 로그인한 탐정 계정에 안전하게 저장돼요.</p></div></main>;
 
   const openReview = async (id: string) => {
     if (!token) return;
@@ -353,16 +381,17 @@ export default function AppShell() {
   const startQuestions = async () => {
     if (!token || !student || questionRequest.current || busy) return;
     questionRequest.current = true;
+    setModal({ kind: "loading", title: "단어 찾기를 준비하고 있어요..." });
     const selectedId = student.id;
     setBusy(true); setError("");
     try {
       const chapterQuestions = await api<Question[]>(`/students/${student.id}/questions/today`, {}, token);
       if (activeStudent.current !== selectedId) return;
       if (!chapterQuestions.length) throw new Error("Empty chapter");
-      setQuestions(chapterQuestions); setOfflineQuestions(false);
+      setModal(null); setQuestions(chapterQuestions); setOfflineQuestions(false);
       const firstUnsolved = chapterQuestions.findIndex(question => !question.correct);
       setQIndex(firstUnsolved < 0 ? 0 : firstUnsolved); setQResult(null); setQSelected(""); setDictationInputMode(preferredInputMode); setPage("questions");
-    } catch (e) { fail(e); } finally { questionRequest.current = false; setBusy(false); }
+    } catch (e) { modalError(e, startQuestions); } finally { questionRequest.current = false; setBusy(false); }
   };
   const startWriting = () => {
     setStory(""); setWriting(null); setWritingInputMode(preferredInputMode); setPage("write"); setSidebarOpen(false); setError("");
@@ -372,7 +401,7 @@ export default function AppShell() {
 
   const renderQuestions = () => <QuestionExercise question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={submitQuestion} onNext={nextQuestion} onRetry={() => { setQResult(null); setQSelected(""); }} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={recognizeHandwriting} />;
 
-  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><label style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" />{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" aria-invalid={profanityBlocked} aria-describedby={profanityBlocked ? "writing-language-warning" : undefined} className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{profanityBlocked && <div id="writing-language-warning" className="form-error" role="alert"><strong>{profanityTitle}</strong><p>{profanityMessage}</p></div>}{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy || profanityBlocked}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
+  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><div className="writing-input-heading"><label htmlFor="story" style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" /></div>{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" aria-invalid={profanityBlocked} aria-describedby={profanityBlocked ? "writing-language-warning" : undefined} className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{profanityBlocked && <div id="writing-language-warning" className="form-error" role="alert"><strong>{profanityTitle}</strong><p>{profanityMessage}</p></div>}{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy || profanityBlocked}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
 
   const renderMyPage = () => <div className="content mypage">
     <div className="section-head"><div><h1>마이페이지</h1><p>내 정보와 학습 기록을 한곳에서 관리하세요.</p></div><button className="btn secondary" onClick={() => setPage("addStudent")}>탐정 추가</button></div>
@@ -459,9 +488,9 @@ export default function AppShell() {
       {token && student && <WritingReviewList key={student.id} token={token} studentId={student.id} categoryNames={categoryNames} onWrite={() => setPage("write")} /> }
     </div>;
   };
-  if (loading) return <main><div className="content panel"><LoadingIndicator message="한글탐정대를 준비하고 있어요…" /></div></main>;
+  if (loading) return <main><div className="content panel"><LoadingIndicator message="한글탐정단을 준비하고 있어요…" /></div></main>;
   if (!token) return renderAuth();
-  if (!student) return <><header className="top"><div className="brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정대</div></header><main>{renderAddStudent()}</main></>;
+  if (!student) return <><header className="top"><div className="brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정단</div></header><main>{renderAddStudent()}</main></>;
   const menuItems: { id: Page; icon: string; label: string; group?: string; subitem?: boolean }[] = [
     { id: "today", icon: "today", label: "나의 학습" },
     { id: "write", icon: "write", label: "오늘의 글쓰기", subitem: true },
@@ -473,14 +502,15 @@ export default function AppShell() {
   const navigate = (target: Page) => {
     if (target === "questions") { setQIndex(Math.max(0, questions.findIndex(q => !q.correct))); setQResult(null); setQSelected(""); }
     if (target === "write") { startWriting(); return; }
+    if (["today", "home", "quests"].includes(target) && token && student) void refreshStudentData(token, student);
     setPage(target); setSidebarOpen(false);
   };
   const detailState = page === "quests" ? detailStatus.daily : page === "review" ? detailStatus.review : "ready";
   return <div className="app-layout">
     {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
     <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-      <button className="sidebar-brand" onClick={() => navigate("today")} aria-label="한글탐정대 홈으로">
-        <span className="brand-mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span><span>한글탐정대</span>
+      <button className="sidebar-brand" onClick={() => navigate("today")} aria-label="한글탐정단 홈으로">
+        <span className="brand-mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span><span>한글탐정단</span>
       </button>
       <div className="sidebar-student"><span className="sidebar-avatar">{student.name.slice(0,1)}</span><span><b>{student.name} 탐정</b><small>초등학교 {student.grade}학년</small></span><span className="student-star">대원증</span></div>
       <nav className="side-nav" aria-label="주요 메뉴">
@@ -494,8 +524,8 @@ export default function AppShell() {
       <div className="sidebar-bottom"><div className="sidebar-tip"><small>탐정의 약속 · 01</small><p>틀린 글자에도<br />발견할 것이 있어요.</p><span>천천히, 내 힘으로.</span></div><div className="sidebar-local-note"><span>↳</span><span><b>탐정의 기록을 차곡차곡</b><small>나의 계정에 안전하게 저장해요</small></span></div></div>
     </aside>
     <div className="app-main-column">
-      <header className="app-topbar"><button className="mobile-menu-button" aria-label="메뉴 열기" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(v => !v)}>☰</button><div className="mobile-brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정대</div><div className="topbar-title"><span className="breadcrumb">한글탐정대</span><span className="breadcrumb-slash">/</span> {menuItems.find(item => item.id === page)?.label ?? "나의 학습"}</div><div className="topbar-right">{students.length > 1 && <label className="topbar-student">탐정<select aria-label="탐정 선택" value={student.id} onChange={e => switchStudent(e.target.value)}>{students.map(s => <option key={s.id} value={s.id}>{s.name} · 초{s.grade}</option>)}</select></label>}<span className="topbar-streak">오늘의 미션 {Number(daily.questionsDone)+Number(daily.writingDone)} / 2 완료</span><button className="logout-button" onClick={logout} aria-label={`${username} 로그아웃`}>로그아웃</button></div></header>
+      <header className="app-topbar"><button className="mobile-menu-button" aria-label="메뉴 열기" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(v => !v)}>☰</button><div className="mobile-brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정단</div><div className="topbar-title"><span className="breadcrumb">한글탐정단</span><span className="breadcrumb-slash">/</span> {menuItems.find(item => item.id === page)?.label ?? "나의 학습"}</div><div className="topbar-right">{students.length > 1 && <label className="topbar-student">탐정<select aria-label="탐정 선택" value={student.id} onChange={e => switchStudent(e.target.value)}>{students.map(s => <option key={s.id} value={s.id}>{s.name} · 초{s.grade}</option>)}</select></label>}<span className="topbar-streak">오늘의 미션 {Number(daily.questionsDone)+Number(daily.writingDone)} / 2 완료</span><button className="logout-button" onClick={logout} aria-label={`${username} 로그아웃`}>로그아웃</button></div></header>
       <main className="app-main-content">{(studentLoading || detailState === "loading") && ["home", "today", "quests", "review"].includes(page) ? <div className="learning-record-loading"><div className="panel"><LoadingIndicator message="학습 기록을 불러오고 있어요…" /><p className="muted">잠시만 기다려 주세요. 글쓰기는 메뉴에서 바로 시작할 수 있어요.</p></div></div> : (studentLoadError || detailState === "error") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>학습 기록을 모두 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "writingResult" ? renderWritingResult() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
-    </div>{busy && <div className="busy-status"><LoadingIndicator message="처리하고 있어요…" /></div>}{toast && <div className="toast" role="status">{toast}</div>}{error && token && <div className="toast error-toast" role="alert" onClick={() => setError("")}>{error}　×</div>}
+    </div>{modal && <ActivityModal kind={modal.kind} title={modal.title} message={modal.message}>{modal.action ? <button className="btn" onClick={modal.action.run}>{modal.action.label}</button> : modal.kind === "success" ? <button className="btn" onClick={nextQuestion}>다음 문제</button> : modal.kind === "failure" ? <><button className="btn secondary" onClick={() => { setModal(null); setQResult(null); setQSelected(""); }}>다시 풀기</button><button className="btn" onClick={skipQuestion}>건너뛰기</button></> : modal.kind === "error" ? <><button className="btn secondary" onClick={() => setModal(null)}>닫기</button><button className="btn" onClick={() => modal.retry?.()}>다시 시도</button></> : null}</ActivityModal>}{busy && !modal && <div className="busy-status"><LoadingIndicator message="처리하고 있어요…" /></div>}{toast && <div className="toast" role="status">{toast}</div>}{error && token && <div className="toast error-toast" role="alert" onClick={() => setError("")}>{error}　×</div>}
   </div>;
 }

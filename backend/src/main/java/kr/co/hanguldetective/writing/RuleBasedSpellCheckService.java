@@ -13,6 +13,7 @@ public class RuleBasedSpellCheckService {
         new Rule(Pattern.compile("학교에갔다"),"학교에 갔다","SPACING","장소와 행동을 나타내는 말을 띄어 써요.","‘학교에’와 ‘갔다’를 나누어 보세요.","가운데 한 칸을 띄워요.",List.of("학교에갔다","학교에 갔다","학교 에갔다")),
         new Rule(Pattern.compile("되요"),"돼요","DOE_DWAE","‘되어요’로 바꿀 수 있는지 살펴봐요.","‘되어요’로 바꿔 말해 보세요.","‘되어요’를 줄이면 두 글자가 돼요.",List.of("되요","돼요","되어요")),
         common("됬", "됐", "DOE_DWAE", "‘되었’을 줄인 표현인지 생각해 보세요."),
+        common("끝낫으면", "끝났으면", "FINAL_CONSONANT", "‘끝나다’의 지난 일을 바라거나 가정하는 표현이에요."),
         common("오랫만", "오랜만", "PRONUNCIATION_SPELLING", "‘오래간만’을 줄인 말이에요."),
         common("웬지", "왠지", "PRONUNCIATION_SPELLING", "‘왜인지’를 줄인 말이에요."),
         common("몇일", "며칠", "PRONUNCIATION_SPELLING", "날짜나 날의 수를 나타내는 말이에요."),

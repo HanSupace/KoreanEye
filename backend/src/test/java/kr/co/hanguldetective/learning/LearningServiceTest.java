@@ -12,6 +12,20 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class LearningServiceTest {
+    @Test void startingNewChapterPreservesLegacyCompletedHistory(){
+        var yesterday=LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
+        var time=yesterday.atTime(12,0).atZone(ZoneId.of("Asia/Seoul")).toInstant();
+        var records=java.util.stream.IntStream.range(0,10)
+            .mapToObj(i->attempt(UUID.randomUUID(),true,time)).toList();
+        when(attempts.findAllByStudentId(student)).thenReturn(records);
+        var chapter=new LearningChapter(null,LocalDate.now(ZoneId.of("Asia/Seoul")),2);
+        var question=mock(LearningQuestion.class);
+        chapter.addQuestion(question);
+        when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        var history=service.history(student,"owner");
+        assertEquals(1,history.stream().filter(day->day.date().equals(yesterday)).findFirst().orElseThrow().chaptersCompleted());
+        assertEquals(0,history.stream().filter(day->day.date().equals(chapter.getChapterDate())).findFirst().orElseThrow().chaptersCompleted());
+    }
     final QuestionAttemptRepository attempts=mock(QuestionAttemptRepository.class);
     final WritingEntryRepository writings=mock(WritingEntryRepository.class);
     final LearningChapterRepository chapters=mock(LearningChapterRepository.class);
