@@ -30,12 +30,27 @@ public class WritingService {
         int acceptedCandidates=0;
         int droppedCandidates=0;
         for(SpellCheckService.DetectedError e:analysis.errors().stream().sorted(Comparator.comparingInt(SpellCheckService.DetectedError::startIndex)).toList()){
-            if(e.startIndex()<0||e.endIndex()>text.length()||e.startIndex()>=e.endIndex()){
+            if("PUNCTUATION".equals(e.category())){
+                droppedCandidates++;
+                log.info("Writing analysis candidate ignored: provider={}, reason=PUNCTUATION, startIndex={}, endIndex={}",analysis.provider(),e.startIndex(),e.endIndex());
+                continue;
+            }
+            int startIndex=e.startIndex();
+            int endIndex=e.endIndex();
+            if(startIndex<0||endIndex>text.length()||startIndex>=endIndex||!text.substring(startIndex,endIndex).equals(e.original())){
+                int correctedStart=findNearestOccurrence(text,e.original(),e.startIndex());
+                if(correctedStart>=0){
+                    startIndex=correctedStart;
+                    endIndex=correctedStart+e.original().length();
+                    log.info("Writing analysis candidate range corrected: provider={}, category={}, startIndex={}, endIndex={}",analysis.provider(),e.category(),startIndex,endIndex);
+                }
+            }
+            if(startIndex<0||endIndex>text.length()||startIndex>=endIndex){
                 droppedCandidates++;
                 log.warn("Writing analysis candidate dropped: provider={}, reason=INVALID_RANGE, category={}, startIndex={}, endIndex={}, sourceLength={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex(),text.length());
                 continue;
             }
-            if(!text.substring(e.startIndex(),e.endIndex()).equals(e.original())){
+            if(!text.substring(startIndex,endIndex).equals(e.original())){
                 droppedCandidates++;
                 log.warn("Writing analysis candidate dropped: provider={}, reason=SOURCE_MISMATCH, category={}, startIndex={}, endIndex={}, sourceLength={}, candidateLength={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex(),text.length(),e.original().length());
                 continue;
@@ -46,7 +61,7 @@ public class WritingService {
                 continue;
             }
             try{
-                writing.addError(new WritingError(e.startIndex(),e.endIndex(),e.original(),e.correct(),e.category(),e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));
+                writing.addError(new WritingError(startIndex,endIndex,e.original(),e.correct(),e.category(),e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));
                 acceptedCandidates++;
             }catch(Exception ex){
                 droppedCandidates++;
@@ -55,6 +70,16 @@ public class WritingService {
         }
         log.info("Writing analysis completed: provider={}, candidates={}, accepted={}, dropped={}",analysis.provider(),analysis.errors().size(),acceptedCandidates,droppedCandidates);
         return toDto(writings.save(writing),analysis.provider());
+    }
+    private int findNearestOccurrence(String text,String original,int suggestedStart){
+        if(original==null||original.isBlank())return -1;
+        int bestIndex=-1;
+        int bestDistance=Integer.MAX_VALUE;
+        for(int index=text.indexOf(original);index>=0;index=text.indexOf(original,index+1)){
+            int distance=Math.abs(index-suggestedStart);
+            if(distance<bestDistance){bestIndex=index;bestDistance=distance;}
+        }
+        return bestIndex;
     }
     @Transactional(readOnly=true) public WritingDto get(UUID writingId,String email){WritingEntry w=writings.findById(writingId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));owned(w,email);return toDto(w,"stored");}
     @Transactional(readOnly=true) public List<WritingDto> list(UUID studentId,String email){students.requireOwned(studentId,email);return writings.findAllByStudentIdOrderByCreatedAtDesc(studentId).stream().map(w->toDto(w,"stored")).toList();}
