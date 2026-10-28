@@ -1,6 +1,8 @@
 services:
   api:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       SUPABASE_JDBC_URL: ${SUPABASE_JDBC_URL:?Set SUPABASE_JDBC_URL in .env}
       SUPABASE_DB_USERNAME: ${SUPABASE_DB_USERNAME:?Set SUPABASE_DB_USERNAME in .env}

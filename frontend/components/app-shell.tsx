@@ -1,5 +1,6 @@
 "use client";
 import Image from "next/image";
+import { containsProfanity, profanityTitle, profanityMessage } from "@/lib/profanity";
 import LoadingIndicator from "./loading-indicator";
 import WritingReviewList from "./writing-review-list";
 import { Quests, Ranking } from "./activity-panels";
@@ -288,7 +289,9 @@ export default function AppShell() {
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
 
+  const profanityBlocked = containsProfanity(story);
   const analyzeWriting = async () => {
+    if (containsProfanity(story)) return;
     if (busy) return;
     if (!token || !student || !story.trim()) { setError("한 문장만 적어도 좋아요."); return; }
     const selectedId = student.id;
@@ -369,7 +372,7 @@ export default function AppShell() {
 
   const renderQuestions = () => <QuestionExercise question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={submitQuestion} onNext={nextQuestion} onRetry={() => { setQResult(null); setQSelected(""); }} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={recognizeHandwriting} />;
 
-  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><label style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" />{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
+  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><label style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" />{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" aria-invalid={profanityBlocked} aria-describedby={profanityBlocked ? "writing-language-warning" : undefined} className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{profanityBlocked && <div id="writing-language-warning" className="form-error" role="alert"><strong>{profanityTitle}</strong><p>{profanityMessage}</p></div>}{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy || profanityBlocked}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
 
   const renderMyPage = () => <div className="content mypage">
     <div className="section-head"><div><h1>마이페이지</h1><p>내 정보와 학습 기록을 한곳에서 관리하세요.</p></div><button className="btn secondary" onClick={() => setPage("addStudent")}>탐정 추가</button></div>

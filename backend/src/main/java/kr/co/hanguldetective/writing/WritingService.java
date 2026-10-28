@@ -25,6 +25,7 @@ public class WritingService {
         if(text==null||text.isBlank())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"한 문장만 적어도 좋아요.");
         if(text.length()>5000)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"글은 5,000자까지 쓸 수 있어요.");
         StudentProfile student=students.requireOwned(studentId,email);
+        ProfanityFilter.validate(text);
         WritingEntry writing=new WritingEntry(student,text);
         SpellCheckService.AnalysisResult analysis=spellCheck.analyze(text);
         int acceptedCandidates=0;

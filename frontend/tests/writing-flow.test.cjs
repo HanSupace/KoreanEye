@@ -20,6 +20,7 @@ function harness(file, initial, api) {
   vm.runInNewContext(source, {
     exports, AbortController,
     require(name) {
+      if (name === '@/lib/profanity') return loadProfanity();
       if (name === 'react') return hooks;
       if (name === 'react/jsx-runtime') return require(name);
       if (name === '@/lib/api') return { api, ApiError: class ApiError extends Error {} };
@@ -95,4 +96,67 @@ test('empty review shows guidance without 0/0', async () => {
   const result = text(h.render({ token: 'mock-token', studentId: 'student', categoryNames: {}, onWrite() {} }));
   assert.ok(result.includes('아직 복습할 글쓰기 표현이 없어요.'));
   assert.ok(!result.includes('0 / 0'));
+});
+
+function loadProfanity() {
+  const source = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../lib/profanity.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
+  const exports = {};
+  vm.runInNewContext(source, { exports, require: name => require('../lib/profanity-policy.json') });
+  return exports;
+}
+for (const item of require('../lib/profanity-policy.json').cases) {
+  test(`shared language policy: ${item.text}`, () => assert.equal(loadProfanity().containsProfanity(item.text), item.blocked));
+}
+for (const [key, blocked] of [['blockedExpressions', true], ['allowedExpressions', false]]) {
+  for (const expression of require('../lib/profanity-policy.json')[key]) {
+    test(`language morphology (${blocked ? 'block' : 'allow'}): ${expression}`, () => {
+      const filter = loadProfanity();
+      for (const input of [expression, `오늘 ${expression} 그리고 집에 갔다.`, `오늘 ${expression}`]) {
+        assert.equal(filter.containsProfanity(input), blocked, input);
+      }
+    });
+  }
+}
+for (const expression of ['ㅅㄲ', 'ㄱㅅㄲ', 'ㅈㅅㄲ', 'ㅋㅋㅅㄲ', 'ㄱㄴㄷㅅㄲ', 'ㅅㄲ야', 'ㅅㄲ네', 'ㅅㅂ', 'ㅂㅅ', 'ㅈ같네', '좆같네', '게병신', '병신아', '좆 같은', 'ㄱ병신', 'ㅈ병신', 'ㅂㅅ병신', 'ㄱㄴㄷ시발', 'ㅎ새끼', 'ㅋㅋ씹새']) {
+test(`profanity warns, preserves input, blocks handler and allows correction: ${expression}`, async () => {
+  let calls = 0;
+  const h = shell(async (_, options) => { if (options?.method === 'POST') { calls++; return writing; } return []; });
+  h.values[23] = `오늘 ${expression}`;
+  let view = h.render();
+  assert.ok(text(find(view, n => n.props?.role === 'alert')).includes('바른 언어를 사용해 주세요.'));
+  const button = find(view, n => n.type === 'button' && text(n) === '단서 찾기');
+  assert.equal(button.props.disabled, true);
+  await button.props.onClick();
+  assert.equal(calls, 0);
+  assert.equal(h.values[23], `오늘 ${expression}`);
+  find(view, n => n.type === 'textarea' && n.props.id === 'story').props.onChange({ target: { value: '친구와 같이 놀았다.' } });
+  view = h.render();
+  const corrected = find(view, n => n.type === 'button' && text(n) === '단서 찾기');
+  assert.equal(corrected.props.disabled, false);
+  await corrected.props.onClick();
+  assert.equal(calls, 1);
+  assert.equal(h.values[4], 'writingResult');
+});
+}
+
+// Generate every modern consonant and every ordered pair, including double consonants.
+const consonants = Array.from('ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ');
+const prefixes = [...consonants, ...consonants.flatMap(a => consonants.map(b => a + b)), 'ㄱㄴㄷ', 'ㅋㅋㅋ', 'ㄳㄵㄶㄺㄻㄼㄽㄾㄿㅀㅄ'];
+test('all consonant prefixes preserve full, initial and mixed profanity detection', () => {
+  const filter = loadProfanity();
+  const policy = require('../lib/profanity-policy.json');
+  for (const prefix of prefixes) {
+    for (const term of [...policy.terms, ...policy.initialTerms, 'ㅈ같네', '개병신', 'ㅅㄲ야', 'ㅅㄲ네']) {
+      for (const input of [prefix + term, `오늘 ${prefix}${term} 그리고`, (prefix + term).normalize('NFKC')]) {
+        assert.equal(filter.containsProfanity(input), true, input);
+      }
+    }
+  }
+});
+test('consonants do not turn ordinary Korean words into profanity', () => {
+  const filter = loadProfanity();
+  const normal = ['시발점', '등신대', '졸라매고', '병원에 갔다.', '친구와 같이 놀았다.', '씹새우를 관찰했다.'];
+  for (const prefix of ['', ...prefixes]) {
+    for (const word of normal) assert.equal(filter.containsProfanity(prefix + word), false, prefix + word);
+  }
 });
