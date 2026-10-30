@@ -19,6 +19,7 @@ type AttemptResult = { correct: boolean; message: string; answer?: string | null
 type Daily = { questionsDone: boolean; writingDone: boolean; reviewDone: boolean; completedCount: number };
 
 const STORE = "hangul-detective-session";
+const STUDENT_DATA_CACHE_TTL_MS = 15_000;
 const categoryNames: Record<string, string> = { SPACING: "띄어쓰기", FINAL_CONSONANT: "받침", DOE_DWAE: "돼 / 되", AN_ANH: "안 / 않", PRONUNCIATION_SPELLING: "맞춤법", VOCABULARY: "낱말", PARTICLE: "조사", PUNCTUATION: "문장 부호", CHARACTER_OMISSION: "글자 빠뜨림", CHARACTER_CONFUSION: "글자 혼동", GRAMMAR_EXPRESSION: "문법·표현", OTHER: "기타" };
 
 function QuestionPrompt({ prompt, selected }: { prompt: string; selected: string }) {
@@ -84,6 +85,8 @@ export default function AppShell() {
   const [studentLoading, setStudentLoading] = useState(false);
   const [studentLoadError, setStudentLoadError] = useState(false);
   const dataRequest = useRef(0);
+  const studentDataCache = useRef<{ key: string; expiresAt: number } | null>(null);
+  const sessionRequest = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const questionRequest = useRef(false);
   const answerRequest = useRef(false);
   const activeStudent = useRef<string | null>(null);
@@ -160,47 +163,59 @@ export default function AppShell() {
   const refreshStudentData = useCallback((currentToken: string, currentStudent: Student, force = false): Promise<void> => {
     const key = `${currentToken}:${currentStudent.id}`;
     if (!force && refreshRequest.current?.key === key) return refreshRequest.current.promise;
+    if (!force && studentDataCache.current?.key === key && studentDataCache.current.expiresAt > Date.now()) return Promise.resolve();
+    studentDataCache.current = null;
     const request = ++dataRequest.current;
     setStudentLoading(true); setStudentLoadError(false);
     setDetailStatus({ daily: "loading", review: "loading" });
     const current = () => request === dataRequest.current;
+    let succeeded = true;
     const promise = Promise.all([
       api<Daily>(`/students/${currentStudent.id}/daily-learning`, {}, currentToken)
         .then(value => { if (current()) { setDaily(value); setDetailStatus(status => ({ ...status, daily: "ready" })); } })
-        .catch(() => { if (current()) setDetailStatus(status => ({ ...status, daily: "error" })); }),
+        .catch(() => { succeeded = false; if (current()) setDetailStatus(status => ({ ...status, daily: "error" })); }),
       api<DayRecord[]>(`/students/${currentStudent.id}/learning-history`, {}, currentToken)
         .then(value => { if (current()) setRecords(value); })
-        .catch(() => { if (current()) setStudentLoadError(true); })
+        .catch(() => { succeeded = false; if (current()) setStudentLoadError(true); })
         .finally(() => { if (current()) setStudentLoading(false); }),
       api<QuestionReviewChapter[]>(`/students/${currentStudent.id}/question-reviews`, {}, currentToken)
         .then(value => { if (current()) { setQuestionReviewChapters(value); setDetailStatus(status => ({ ...status, review: "ready" })); } })
-        .catch(() => { if (current()) setDetailStatus(status => ({ ...status, review: "error" })); }),
+        .catch(() => { succeeded = false; if (current()) setDetailStatus(status => ({ ...status, review: "error" })); }),
     ]).then(() => {}).finally(() => {
+      if (current() && succeeded) studentDataCache.current = { key, expiresAt: Date.now() + STUDENT_DATA_CACHE_TTL_MS };
       if (refreshRequest.current?.promise === promise) refreshRequest.current = null;
     });
     refreshRequest.current = { key, promise };
     return promise;
   }, []);
 
-  const loadSession = useCallback(async (currentToken: string, currentUsername: string, savedStudentId?: string) => {
-    const [list, preferences] = await Promise.all([
-      api<Student[]>("/students", {}, currentToken),
-      api<{ preferredInputMode: InputMode }>("/preferences", {}, currentToken).catch(() => ({ preferredInputMode: "TYPE" as InputMode })),
-    ]);
-    setPreferredInputMode(preferences.preferredInputMode);
-    setWritingInputMode(preferences.preferredInputMode);
-    setDictationInputMode(preferences.preferredInputMode);
-    setToken(currentToken); setUsername(currentUsername); setStudents(list);
-    const selected = list.find(s => s.id === savedStudentId) ?? list[0] ?? null;
-    setStudent(selected);
-    if (selected) {
-      setPage("today");
-      localStorage.setItem(STORE, JSON.stringify({ token: currentToken, username: currentUsername, studentId: selected.id }));
-      void refreshStudentData(currentToken, selected);
-    } else {
-      setPage("addStudent");
-      localStorage.setItem(STORE, JSON.stringify({ token: currentToken, username: currentUsername }));
-    }
+  const loadSession = useCallback((currentToken: string, currentUsername: string, savedStudentId?: string): Promise<void> => {
+    if (sessionRequest.current?.key === currentToken) return sessionRequest.current.promise;
+    let promise!: Promise<void>;
+    promise = (async () => {
+      const [list, preferences] = await Promise.all([
+        api<Student[]>("/students", {}, currentToken),
+        api<{ preferredInputMode: InputMode }>("/preferences", {}, currentToken).catch(() => ({ preferredInputMode: "TYPE" as InputMode })),
+      ]);
+      if (sessionRequest.current?.promise !== promise) return;
+      setPreferredInputMode(preferences.preferredInputMode);
+      setWritingInputMode(preferences.preferredInputMode);
+      setDictationInputMode(preferences.preferredInputMode);
+      setToken(currentToken); setUsername(currentUsername); setStudents(list);
+      const selected = list.find(s => s.id === savedStudentId) ?? list[0] ?? null;
+      setStudent(selected);
+      if (selected) {
+        setPage("today");
+        localStorage.setItem(STORE, JSON.stringify({ token: currentToken, username: currentUsername, studentId: selected.id }));
+        void refreshStudentData(currentToken, selected);
+      } else {
+        setPage("addStudent");
+        localStorage.setItem(STORE, JSON.stringify({ token: currentToken, username: currentUsername }));
+      }
+    })();
+    sessionRequest.current = { key: currentToken, promise };
+    void promise.finally(() => { if (sessionRequest.current?.promise === promise) sessionRequest.current = null; }).catch(() => {});
+    return promise;
   }, [refreshStudentData]);
 
   useEffect(() => {
@@ -244,7 +259,7 @@ export default function AppShell() {
   const logout = () => {
     setEditingProfile(false); setDeletingAccount(false); setAccountError(""); setStory(""); setHints({}); setQuestionReviewChapters([]); setReviewSelections({}); setReviewResults({});
     dataRequest.current++; setStudentLoading(false); setStudentLoadError(false);
-    refreshRequest.current = null;
+    refreshRequest.current = null; studentDataCache.current = null; sessionRequest.current = null;
     localStorage.removeItem(STORE); setToken(null); setUsername(""); setStudents([]); setStudent(null); setRecords([]); setQuestions([]); setWriting(null); setPreferredInputMode("TYPE"); setPage("home"); setError("");
   };
 
@@ -279,10 +294,12 @@ export default function AppShell() {
     setModal({ kind: "loading", title: "정답을 확인하고 있어요..." });
     try {
       const result = await api<AttemptResult>(`/questions/${currentQuestion.id}/attempt`, { method: "POST", body: JSON.stringify({ studentId: student.id, answer: qSelected }) }, token);
+      studentDataCache.current = null;
       if (activityScope.current !== scope) return;
       setQResult(result);
       setModal(result.correct ? { kind: "success", title: "정답이에요!", message: "멋지게 단서를 찾았어요!" } : { kind: "failure", title: "다시 도전해 봐요!", message: "조금만 더 생각해 볼까요?" });
       if (result.correct) {
+        studentDataCache.current = null;
         setQuestions(items => items.map(item => item.id === currentQuestion.id ? { ...item, correct: true } : item));
       }
     } catch (e) { if (activityScope.current === scope) modalError(e, submitQuestion); } finally { answerRequest.current = false; if (activityScope.current === scope) setBusy(false); }
@@ -295,6 +312,7 @@ export default function AppShell() {
     setBusy(true); setError("");
     try {
       const result = await api<AttemptResult>(`/question-reviews/${item.id}/attempt`, { method: "POST", body: JSON.stringify({ answer: reviewSelections[item.id] }) }, token);
+      studentDataCache.current = null;
       if (activityScope.current !== scope) return;
       setReviewResults(current => ({ ...current, [item.id]: result }));
       setQuestionReviewChapters(chapters => chapters.map(chapter => ({
@@ -320,6 +338,7 @@ export default function AppShell() {
     setModal({ kind: "loading", title: "복습 노트에 담고 있어요..." });
     try {
       await api<void>(`/questions/${questions[qIndex].id}/skip`, { method: "POST", body: JSON.stringify({ studentId: student.id }) }, token);
+      studentDataCache.current = null;
       if (activityScope.current !== scope) return;
       notify("이 문제를 복습 노트에 담았어요.");
       nextQuestion();
@@ -338,6 +357,7 @@ export default function AppShell() {
     setModal({ kind: "loading", title: "글 속 단서를 찾고 있어요..." });
     try {
       const result = await api<Writing>(`/students/${student.id}/writings`, { method: "POST", body: JSON.stringify({ text: story }) }, token);
+      studentDataCache.current = null;
       if (activeStudent.current !== selectedId || activityScope.current !== scope) return;
       setModal(null); setWriting(result); setHints({}); setPage("writingResult");
       void refreshStudentData(token, student, true);
@@ -374,6 +394,7 @@ export default function AppShell() {
     setModal({ kind: "loading", title: "정답을 확인하고 있어요..." });
     try {
       const result = await api<AttemptResult>(`/writing-errors/${errorItem.id}/attempt`, { method: "POST", body: JSON.stringify({ answer: input.value }) }, token);
+      studentDataCache.current = null;
       if (activeStudent.current !== studentId || activityScope.current !== scope) return;
       const applyResult = () => setWriting(w => w?.id === writingId ? { ...w, errors: w.errors.map(e => e.id === errorItem.id ? { ...e, attemptCount: result.attemptCount ?? e.attemptCount + 1, solved: result.correct } : e) } : w);
       if (result.correct) {
@@ -547,7 +568,13 @@ export default function AppShell() {
     if (["today", "home", "quests", "review"].includes(target) && token && student) void refreshStudentData(token, student);
     setPage(target); setSidebarOpen(false);
   };
-  const detailState = page === "quests" ? detailStatus.daily : page === "review" ? detailStatus.review : "ready";
+  const pageDataLoading = page === "review" ? detailStatus.review === "loading" : studentLoading || (page === "quests" && detailStatus.daily === "loading");
+  const pageDataError = page === "review" ? detailStatus.review === "error" : studentLoadError || (page === "quests" && detailStatus.daily === "error");
+  const pageLoadingCopy = page === "quests"
+    ? { title: "오늘의 퀘스트를 준비하고 있어요...", description: "도전할 미션을 확인하고 있어요." }
+    : page === "review"
+      ? { title: "복습 노트를 펼치고 있어요...", description: "다시 살펴볼 단서를 찾고 있어요." }
+      : { title: "학습 단계를 준비하고 있어요...", description: "탐정의 학습 기록을 확인하고 있어요." };
   return <div className="app-layout">
     {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
     <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
@@ -567,7 +594,7 @@ export default function AppShell() {
     </aside>
     <div className="app-main-column">
       <header className="app-topbar"><button className="mobile-menu-button" aria-label="메뉴 열기" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(v => !v)}>☰</button><div className="mobile-brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정단</div><div className="topbar-title"><span className="breadcrumb">한글탐정단</span><span className="breadcrumb-slash">/</span> {menuItems.find(item => item.id === page)?.label ?? "나의 학습"}</div><div className="topbar-right">{students.length > 1 && <label className="topbar-student">탐정<select aria-label="탐정 선택" value={student.id} onChange={e => switchStudent(e.target.value)}>{students.map(s => <option key={s.id} value={s.id}>{s.name} · 초{s.grade}</option>)}</select></label>}<span className="topbar-streak">오늘의 미션 {Number(daily.questionsDone)+Number(daily.writingDone)} / 2 완료</span><button className="logout-button" onClick={logout} aria-label={`${username} 로그아웃`}>로그아웃</button></div></header>
-      <main className="app-main-content">{(studentLoading || detailState === "loading") && ["home", "today", "quests", "review"].includes(page) ? <div className="learning-record-loading"><div className="panel"><LoadingIndicator message="학습 기록을 불러오고 있어요…" /><p className="muted">잠시만 기다려 주세요. 글쓰기는 메뉴에서 바로 시작할 수 있어요.</p></div></div> : (studentLoadError || detailState === "error") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>학습 기록을 모두 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "writingResult" ? renderWritingResult() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "weeklyReport" ? <WeeklyReport key={`${token}:${student.id}`} token={token} studentId={student.id} categoryNames={categoryNames} onReview={() => navigate("review")} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
+      <main className="app-main-content">{pageDataLoading && ["home", "today", "quests", "review"].includes(page) ? <div className="learning-record-loading"><div className="panel"><LoadingIndicator message={pageLoadingCopy.title} /><p className="muted">{pageLoadingCopy.description}</p></div></div> : pageDataError && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>필요한 학습 기록을 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student, true)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "writingResult" ? renderWritingResult() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "weeklyReport" ? <WeeklyReport key={`${token}:${student.id}`} token={token} studentId={student.id} onReview={() => navigate("review")} onContinueLearning={() => navigate("today")} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
     </div>{modal && <ActivityModal kind={modal.kind} title={modal.title} message={modal.message}>{modal.action ? <button className="btn" onClick={modal.action.run}>{modal.action.label}</button> : modal.kind === "success" ? <button className="btn" onClick={nextQuestion}>다음 문제</button> : modal.kind === "failure" ? <><button className="btn secondary" onClick={() => { setModal(null); setQResult(null); setQSelected(""); }}>다시 풀기</button><button className="btn" onClick={skipQuestion}>건너뛰기</button></> : modal.kind === "error" ? <><button className="btn secondary" onClick={() => setModal(null)}>닫기</button><button className="btn" onClick={() => modal.retry?.()}>다시 시도</button></> : null}</ActivityModal>}{busy && !modal && <div className="busy-status"><LoadingIndicator message="처리하고 있어요…" /></div>}{toast && <div className="toast" role="status">{toast}</div>}{error && token && <div className="toast error-toast" role="alert" onClick={() => setError("")}>{error}　×</div>}
   </div>;
 }

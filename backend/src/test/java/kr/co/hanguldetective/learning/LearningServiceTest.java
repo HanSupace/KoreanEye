@@ -21,7 +21,7 @@ class LearningServiceTest {
         var chapter=new LearningChapter(null,LocalDate.now(ZoneId.of("Asia/Seoul")),2);
         var question=mock(LearningQuestion.class);
         chapter.addQuestion(question);
-        when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        when(chapters.findHistoryByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
         var history=service.history(student,"owner");
         assertEquals(1,history.stream().filter(day->day.date().equals(yesterday)).findFirst().orElseThrow().chaptersCompleted());
         assertEquals(0,history.stream().filter(day->day.date().equals(chapter.getChapterDate())).findFirst().orElseThrow().chaptersCompleted());
@@ -56,7 +56,7 @@ class LearningServiceTest {
         var writing=mock(WritingEntry.class); var error=mock(WritingError.class);
         when(writing.getId()).thenReturn(UUID.randomUUID()); when(writing.getText()).thenReturn("나의 글");
         when(writing.getCreatedAt()).thenReturn(time); when(writing.getErrors()).thenReturn(List.of(error));
-        when(writings.findAllByStudentIdOrderByCreatedAtDesc(student)).thenReturn(List.of(writing));
+        when(writings.findHistoryByStudentIdOrderByCreatedAtDesc(student)).thenReturn(List.of(writing));
         var day=service.history(student,"owner").stream().filter(d->d.date().equals(LocalDate.of(2026,1,1))).findFirst().orElseThrow();
         assertEquals(1,day.questionsSolved()); assertEquals(1,day.remaining());
         assertEquals(1,day.completedCount()); assertEquals(writing.getId(),day.notes().get(0).id());
@@ -97,6 +97,7 @@ class LearningServiceTest {
         when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
         assertEquals(today,chapter.getCompletionDate());
         assertTrue(service.daily(student,"owner").questionsDone());
+        when(chapters.findHistoryByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
         var history=service.history(student,"owner");
         assertEquals(1,history.stream().filter(day->day.date().equals(today)).findFirst().orElseThrow().chaptersCompleted());
         assertEquals(1,history.stream().mapToInt(LearningService.DayRecord::chaptersCompleted).sum());

@@ -117,6 +117,49 @@ test('rapid menu navigation and repeated active menu clicks share in-flight reco
   assert.equal(h.values[7], false);
 });
 
+test('learning, quest, and review loading screens show page-specific copy', () => {
+  const cases = [
+    ['today', '학습 단계를 준비하고 있어요...', '탐정의 학습 기록을 확인하고 있어요.'],
+    ['quests', '오늘의 퀘스트를 준비하고 있어요...', '도전할 미션을 확인하고 있어요.'],
+    ['review', '복습 노트를 펼치고 있어요...', '다시 살펴볼 단서를 찾고 있어요.'],
+  ];
+  for (const [page, title, description] of cases) {
+    const h = shell(async () => [], page);
+    h.values[7] = true;
+    const tree = h.render();
+    assert.equal(find(tree, node => node.props?.message === title)?.props.message, title);
+    assert.equal(text(find(tree, node => node.type === 'p' && node.props?.className === 'muted')), description);
+  }
+});
+
+test('review waits for its own list without being blocked by unrelated learning history', () => {
+  const h = shell(async () => [], 'review');
+  h.values[7] = true;
+  h.values[9] = { daily: 'ready', review: 'ready' };
+  const tree = h.render();
+  assert.equal(find(tree, node => node.props?.message === '복습 노트를 펼치고 있어요...'), undefined);
+  assert.ok(find(tree, node => node.type === 'section' && node.props?.className === 'review-chapters'));
+});
+
+test('successful student data is reused across quick page visits, but failed responses are never cached', async () => {
+  const calls = [];
+  const h = shell(async url => { calls.push(url); return []; }, 'write');
+  button(h.render(), '나의 학습').props.onClick();
+  await flush();
+  button(h.render(), '퀘스트').props.onClick();
+  button(h.render(), '복습').props.onClick();
+  await flush();
+  assert.equal(calls.length, 3);
+
+  const failedCalls = [];
+  const failed = shell(async url => { failedCalls.push(url); if (url.endsWith('question-reviews')) throw new Error('offline'); return []; }, 'write');
+  button(failed.render(), '나의 학습').props.onClick();
+  await flush();
+  button(failed.render(), '복습').props.onClick();
+  await flush();
+  assert.equal(failedCalls.filter(url => url.endsWith('question-reviews')).length, 2);
+});
+
 for (const outcome of ['success', 'failure']) {
   test(`late question ${outcome} cannot restore modal or navigate after leaving page`, async () => {
     const pending = deferred();

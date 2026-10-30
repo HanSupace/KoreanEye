@@ -241,7 +241,7 @@ public class LearningService implements ApplicationRunner {
     }
     @Transactional(readOnly=true) public DailyDto daily(UUID studentId,String email){
         students.requireOwned(studentId,email); Instant today=LocalDate.now(ZoneId.of("Asia/Seoul")).atStartOfDay(ZoneId.of("Asia/Seoul")).toInstant();
-        List<QuestionAttempt> a=attempts.findAllByStudentIdAndCreatedAtAfter(studentId,today); List<kr.co.hanguldetective.writing.WritingEntry> w=writings.findAllByStudentIdAndCreatedAtAfter(studentId,today);
+        List<QuestionAttempt> a=attempts.findAllByStudentIdAndCreatedAtAfter(studentId,today); List<kr.co.hanguldetective.writing.WritingEntry> w=writings.findDailyByStudentIdAndCreatedAtAfter(studentId,today);
         LocalDate todayDate=LocalDate.now(ZoneId.of("Asia/Seoul"));
         boolean questionDone=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId).stream().anyMatch(chapter->todayDate.equals(chapter.getCompletionDate()))||a.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count()>=10; boolean writeDone=!w.isEmpty(); boolean reviewDone=writeDone&&w.stream().allMatch(entry->entry.getErrors().stream().allMatch(WritingError::isSolved));
         return new DailyDto(questionDone,writeDone,reviewDone,(questionDone?1:0)+(writeDone?1:0)+(reviewDone?1:0));
@@ -256,9 +256,13 @@ public class LearningService implements ApplicationRunner {
         students.requireOwned(studentId,email);
         ZoneId zone=ZoneId.of("Asia/Seoul");
         var allAttempts=attempts.findAllByStudentId(studentId);
-        var allWritings=writings.findAllByStudentIdOrderByCreatedAtDesc(studentId);
+        var allWritings=writings.findHistoryByStudentIdOrderByCreatedAtDesc(studentId);
         Map<LocalDate,List<LearningChapter>> chapterByDate=new HashMap<>();
-        var studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
+        var studentChapters=chapters.findHistoryByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
+        Map<LocalDate,List<QuestionAttempt>> attemptsByDate=new HashMap<>();
+        allAttempts.forEach(attempt->attemptsByDate.computeIfAbsent(attempt.getCreatedAt().atZone(zone).toLocalDate(),ignored->new ArrayList<>()).add(attempt));
+        Map<LocalDate,List<kr.co.hanguldetective.writing.WritingEntry>> writingsByDate=new HashMap<>();
+        allWritings.forEach(writing->writingsByDate.computeIfAbsent(writing.getCreatedAt().atZone(zone).toLocalDate(),ignored->new ArrayList<>()).add(writing));
         Map<LocalDate,Integer> completedQuestionsByDate=new HashMap<>();
         for(var chapter:studentChapters){
             LocalDate completionDate=chapter.getCompletionDate();
@@ -275,8 +279,8 @@ public class LearningService implements ApplicationRunner {
         dates.addAll(chapterByDate.keySet()); dates.addAll(completedQuestionsByDate.keySet());
         LocalDate firstChapterDate=studentChapters.stream().map(LearningChapter::getCreatedAt).map(time->time.atZone(zone).toLocalDate()).min(LocalDate::compareTo).orElse(null);
         return dates.stream().map(date->{
-            var dayAttempts=allAttempts.stream().filter(a->a.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
-            var dayWritings=allWritings.stream().filter(w->w.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
+            var dayAttempts=attemptsByDate.getOrDefault(date,List.of());
+            var dayWritings=writingsByDate.getOrDefault(date,List.of());
             List<LearningChapter> dayChapters=chapterByDate.getOrDefault(date,List.of());
             boolean legacyDay=firstChapterDate==null||date.isBefore(firstChapterDate);
             int solved=legacyDay?(int)dayAttempts.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count():completedQuestionsByDate.getOrDefault(date,0);

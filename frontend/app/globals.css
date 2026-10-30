@@ -4964,17 +4964,42 @@ main {
 .weekly-report small { color: #8a7c72; line-height: 1.7; }
 .weekly-report-value { display: block; font-size: 36px; color: #725337; }
 .weekly-report-unavailable { display: block; font-size: 22px; color: #8a7c72; }
+.weekly-report-card-title { display: flex; align-items: center; gap: 8px; }
+.weekly-report-icon { flex: 0 0 20px; color: var(--ink); }
+.weekly-report-comparison { background: var(--paper); border-color: var(--line); }
+.weekly-report-cards .weekly-report-value,
+.weekly-report-cards .weekly-report-unavailable { min-height: 54px; display: flex; align-items: center; }
 .weekly-report-plot { display: flex; gap: 12px; margin: 24px 0; }
 .weekly-report-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 30px 0; color: #8a7c72; font-size: 12px; }
 .weekly-report-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px; flex: 1; min-width: 0; }
 .weekly-report-column { display: flex; flex-direction: column; align-items: center; gap: 10px; font-size: 13px; }
 .weekly-report-track { width: 100%; max-width: 60px; height: 180px; background: #f4ece3; border-radius: 10px; display: flex; align-items: flex-end; overflow: hidden; }
 .weekly-report-bar { width: 100%; background: #b58b68; border-radius: 10px 10px 0 0; }
-.weekly-report-goal .btn { margin-top: 8px; }
+.weekly-report-column.is-peak .weekly-report-bar { background: #725337; }
+.weekly-report-column.is-peak b,
+.weekly-report-peak-note { color: #725337; }
+.weekly-report .weekly-report-peak-note { font-size: 12px; overflow-wrap: anywhere; }
+.weekly-report-feedback { background: var(--paper); border-color: var(--line); }
+.weekly-report-feedback h3 { margin: 0 0 8px; font-size: 17px; color: var(--ink); line-height: 1.6; }
+.weekly-report-goal { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.weekly-report-goal-comparison { display: flex; gap: 6px; max-width: 280px; margin-top: 16px; }
+.weekly-report-goal-day { flex: 1; height: 10px; border-radius: 5px; background: #f4ece3; }
+.weekly-report-goal-day.is-learned { background: #725337; }
+.weekly-report-guidance { color: var(--muted); font-size: 12px; }
+.weekly-report-guidance summary { cursor: pointer; }
+.weekly-report-guidance p { margin: 8px 0 0; font-size: 12px; line-height: 1.7; }
+.weekly-report-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.weekly-report-actions .btn { min-width: 176px; }
+.weekly-report-actions .btn.secondary { color: var(--ink); border-color: var(--line); background: var(--paper); }
+.weekly-report-actions .btn.secondary:hover { background: var(--bg); }
+.weekly-report-continue-button { color: var(--paper); background: var(--blue); border-color: var(--blue); }
+.weekly-report-continue-button:hover { background: var(--blue2); border-color: var(--blue2); }
 @media (max-width: 760px) {
   .weekly-report-cards { grid-template-columns: 1fr; }
   .weekly-report-period strong { width: 100%; order: -1; }
   .weekly-report-bars { gap: 6px; }
   .weekly-report-column { font-size: 12px; }
   .weekly-report-track { height: 140px; }
+  .weekly-report-actions { flex-direction: column; align-items: stretch; }
+  .weekly-report-actions .btn { width: 100%; min-width: 0; overflow-wrap: anywhere; }
 }

@@ -53,8 +53,8 @@ class WeeklyLearningReportTest {
     @Test void comparisonUsesDistinctQuestionIdsFromTheImmediatelyPreviousWeek() {
         var repeatedLastWeek = question();
         submit(student, repeatedLastWeek, start.minusSeconds(7 * 86400), false);
-        submit(student, repeatedLastWeek, start.minusSeconds(7 * 86400 + 60), true);
-        submit(student, question(), start.minusSeconds(7 * 86400 + 120), false);
+        submit(student, repeatedLastWeek, start.minusSeconds(7 * 86400).plusSeconds(60), true);
+        submit(student, question(), start.minusSeconds(7 * 86400).plusSeconds(120), false);
 
         var repeatedThisWeek = question();
         submit(student, repeatedThisWeek, start, false);
