@@ -1,4 +1,6 @@
 @import "tailwindcss";
+
+.hint-panel{margin:16px 0}.hint-panel>.hint-box{margin-top:10px;line-height:1.7}.hint-panel .hint-box p{margin:6px 0}.hint-options{display:flex;flex-wrap:wrap;gap:8px;padding:0;margin:12px 0 0;list-style:none}.hint-options li{padding:7px 14px;background:#fff;border:1px solid #d8c8b9;border-radius:10px;white-space:pre-wrap}.hint-loading{margin-left:10px;color:#75675d;font-size:13px}
 .mypage { max-width: 880px; }
 .mypage .preference-card { max-width: none; }
 .mypage .mypage-section { margin-bottom: 20px; padding: 28px; border: 1px solid var(--line); box-shadow: none; }

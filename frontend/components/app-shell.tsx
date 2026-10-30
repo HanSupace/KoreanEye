@@ -1,5 +1,6 @@
 "use client";
 import Image from "next/image";
+import HintPanel from "./hint-panel";
 import { NavIcon } from "./detective-art";
 
 import LearningNotebook, { DayRecord } from "./learning-notebook";
@@ -46,7 +47,8 @@ function speakKorean(text: string) {
   window.speechSynthesis.speak(utterance);
 }
 
-function QuestionExercise({ question, index, total, selected, onSelect, result, offline, busy, onSubmit, onNext, onRetry, onLater, inputMode, onInputMode, onRecognize }: {
+function QuestionExercise({ question, index, total, selected, onSelect, result, offline, busy, onSubmit, onNext, onRetry, onLater, inputMode, onInputMode, onRecognize, token, studentId }: {
+  token: string; studentId: string;
   question?: Question; index: number; total: number; selected: string; onSelect: (value: string) => void;
   result: AttemptResult | null; offline: boolean; busy: boolean; onSubmit: () => void; onNext: () => void;
   onRetry: () => void; onLater: () => void; inputMode: InputMode; onInputMode: (mode: InputMode) => void; onRecognize: (image: string) => Promise<string>;
@@ -68,6 +70,7 @@ function QuestionExercise({ question, index, total, selected, onSelect, result, 
         <InputModePicker value={inputMode} onChange={onInputMode} label="받아쓰기 입력 방식" />
         {inputMode === "HANDWRITING" ? <>{selected && <div className="recognized-text">읽은 글씨: <b>{selected}</b></div>}<HandwritingPad onRecognize={async image => { const text = await onRecognize(image); if (text) onSelect(text.replace(/\s+/g, "").trim()); return text; }} disabled={!!result || busy} /></> : <input className={`field-input dictation-input ${result && !result.correct ? "is-incorrect" : result?.correct ? "is-correct" : ""}`} value={selected} onChange={event => onSelect(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && selected.trim() && !result && !busy) onSubmit(); }} disabled={!!result} autoComplete="off" autoCapitalize="off" aria-label="들은 단어 입력" placeholder="들은 단어를 써보세요" />}
       </div> : <div className="choices">{question.choices.map((choice, choiceIndex) => <button key={choice} className={`choice ${selected === choice ? "selected" : ""} ${result?.correct && selected === choice ? "correct" : ""} ${result && !result.correct && selected === choice ? "incorrect" : ""}`} onClick={() => !result && onSelect(choice)} disabled={!!result}><span className="choice-letter">{String(choiceIndex + 1).padStart(2, "0")}</span>{choice}</button>)}</div>}
+      {!offline && !result?.correct && <HintPanel key={`${studentId}-${question.id}`} path={`/questions/${question.id}/hint`} token={token} studentId={studentId} disabled={busy} />}
       {result && <div className={`feedback ${result.correct ? "" : "incorrect"}`}>{result.message}</div>}
       <div className="row-actions question-actions">{!result && <button className="btn secondary" onClick={onLater} disabled={busy}>건너뛰기</button>}{result && !result.correct ? <button className="btn" onClick={onRetry}>다시 도전</button> : result ? <button className="btn" onClick={onNext}>{index === total - 1 ? "챕터 완료" : "다음 문제"}</button> : <button className="btn" disabled={!selected.trim() || busy} onClick={onSubmit}>{busy ? "확인 중…" : "정답 확인"}</button>}</div>
     </div>}
@@ -325,14 +328,6 @@ export default function AppShell() {
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
 
-  const showHint = async (item: WritingError) => {
-    if (!token) return; setBusy(true);
-    try {
-      const result = await api<{ level: number; hint: string }>(`/writing-errors/${item.id}/hint`, { method: "POST", body: "{}" }, token);
-      setHints(h => ({ ...h, [item.id]: result.hint }));
-      setWriting(w => w ? { ...w, errors: w.errors.map(e => e.id === item.id ? { ...e, hintLevelUsed: result.level } : e) } : w);
-    } catch (e) { fail(e); } finally { setBusy(false); }
-  };
 
   const renderAddStudent = () => <div className="content"><div className="section-head"><div><h1>탐정 프로필 만들기</h1><p>아이의 이름과 학년만 적어주세요.</p></div><button className="logout-button" onClick={logout}>로그아웃</button></div><form className="panel" onSubmit={createStudent} style={{ maxWidth: 520, marginInline: "auto" }}><label className="field-label">이름<input className="field-input" name="name" required maxLength={40} placeholder="민수" /></label><label className="field-label">학년<select className="field-input" name="grade" defaultValue="2"><option value="1">초등학교 1학년</option><option value="2">초등학교 2학년</option><option value="3">초등학교 3학년</option></select></label><label className="field-label">별명 <span className="muted">(선택)</span><input className="field-input" name="nickname" maxLength={40} placeholder="꼬마 탐정" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="btn" disabled={busy}>{busy ? "저장 중…" : "프로필 저장"}</button></form></div>;
 
@@ -360,7 +355,7 @@ export default function AppShell() {
   const renderToday = () => <LearningNotebook key={student?.id} records={records}
     onQuestions={startQuestions} />;
 
-  const renderQuestions = () => <QuestionExercise question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={submitQuestion} onNext={nextQuestion} onRetry={() => { setQResult(null); setQSelected(""); }} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={recognizeHandwriting} />;
+  const renderQuestions = () => <QuestionExercise token={token ?? ""} studentId={student?.id ?? ""} question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={submitQuestion} onNext={nextQuestion} onRetry={() => { setQResult(null); setQSelected(""); }} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={recognizeHandwriting} />;
 
   const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><label style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" />{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
 
@@ -415,6 +410,7 @@ export default function AppShell() {
                   <InputModePicker value={dictationInputMode} onChange={setDictationInputMode} label="받아쓰기 복습 입력 방식" />
                   {dictationInputMode === "HANDWRITING" ? <>{reviewSelections[item.id] && <div className="recognized-text">읽은 글씨: <b>{reviewSelections[item.id]}</b></div>}<HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setReviewSelections(current => ({ ...current, [item.id]: text.replace(/\s+/g, "").trim() })); return text; }} disabled={!!result || busy} /></> : <input className={`field-input dictation-input ${result && !result.correct ? "is-incorrect" : result?.correct ? "is-correct" : ""}`} value={reviewSelections[item.id] ?? ""} onChange={event => setReviewSelections(current => ({ ...current, [item.id]: event.target.value }))} disabled={!!result || busy} autoComplete="off" placeholder="들은 단어를 써보세요" aria-label="복습 단어 입력" />}
                 </div> : <div className="choices">{item.choices.map((choice, index) => <button key={choice} className={`choice ${reviewSelections[item.id] === choice ? "selected" : ""} ${result && !result.correct && reviewSelections[item.id] === choice ? "incorrect" : ""}`} disabled={!!result || busy} onClick={() => setReviewSelections(current => ({ ...current, [item.id]: choice }))}><span className="choice-letter">{String(index + 1).padStart(2, "0")}</span>{choice}</button>)}</div>}
+                {!result?.correct && <HintPanel key={`${student?.id}-${item.id}`} path={`/question-reviews/${item.id}/hint`} token={token ?? ""} disabled={busy} />}
                 {result && !result.correct && <div className="feedback incorrect">틀렸어요.</div>}
                 {result?.correct && <div className="feedback">{result.message}</div>}
                 <div className="row-actions">{result && !result.correct ? <button className="btn secondary" onClick={() => { setReviewSelections(current => ({ ...current, [item.id]: "" })); setReviewResults(current => { const next = { ...current }; delete next[item.id]; return next; }); }}>{item.questionType === "LISTEN_AND_TYPE" ? "다시 쓰기" : "다시 고르기"}</button> : <button className="btn" disabled={!reviewSelections[item.id]?.trim() || busy || !!result} onClick={() => submitQuestionReview(item)}>{busy ? "확인 중…" : "정답 확인"}</button>}{item.reviewAttempts > 0 && <span className="muted">복습 시도 {item.reviewAttempts}회</span>}</div>
@@ -427,7 +423,7 @@ export default function AppShell() {
         <div className="archive-heading"><h2>글쓰기 복습</h2><span>{writingErrors.filter(item => item.solved).length} / {writingErrors.length} 해결</span></div>
         {!writing ? <div className="panel">작성한 글에서 찾은 단서도 여기에 모여요.</div> : <>
           <div className="panel"><div style={{ fontSize: 17, lineHeight: 1.9, whiteSpace: "pre-wrap" }}>{writing.text}</div></div>
-          {writingErrors.length ? <div className="error-list">{writingErrors.map(item => <div className="error-item" key={item.id}><span className="qcategory">{categoryNames[item.category] ?? item.category}</span><p style={{ fontSize: 17, fontWeight: 800, margin: "13px 0" }}>“{item.original}” 부분을 다시 생각해 써볼까요?</p>{item.solved ? <div className="feedback">잘 고쳤어요! 직접 단서를 찾았네요</div> : <><div className="answer-row"><input id={`answer-${item.id}`} placeholder="바르게 고쳐 써보기" aria-label={`${item.original} 고쳐 쓰기`} /><button className="btn small" disabled={busy} onClick={() => { const input = document.getElementById(`answer-${item.id}`) as HTMLInputElement | null; if (input) submitRewrite(item, input); }}>확인</button><button className="btn small secondary" disabled={busy} onClick={() => showHint(item)}>힌트 보기</button></div>{hints[item.id] && <div className="hint-box">힌트 — {hints[item.id]}</div>}<div className="muted" style={{ marginTop: 8 }}>다시 도전 {item.attemptCount}회 · 힌트 {item.hintLevelUsed}단계</div></>}</div>)}</div> : <div className="panel" style={{ textAlign: "center" }}><div className="completion-seal">확인 완료</div><h2>찾을 단서가 없어요!</h2><p>글을 멋지게 썼네요. 다음에도 편하게 써봐요.</p></div>}
+          {writingErrors.length ? <div className="error-list">{writingErrors.map(item => <div className="error-item" key={item.id}><span className="qcategory">{categoryNames[item.category] ?? item.category}</span><p style={{ fontSize: 17, fontWeight: 800, margin: "13px 0" }}>“{item.original}” 부분을 다시 생각해 써볼까요?</p>{item.solved ? <div className="feedback">잘 고쳤어요! 직접 단서를 찾았네요</div> : <><div className="answer-row"><input id={`answer-${item.id}`} placeholder="바르게 고쳐 써보기" aria-label={`${item.original} 고쳐 쓰기`} /><button className="btn small" disabled={busy} onClick={() => { const input = document.getElementById(`answer-${item.id}`) as HTMLInputElement | null; if (input) submitRewrite(item, input); }}>확인</button></div><HintPanel key={item.id} path={`/writing-errors/${item.id}/hint`} token={token ?? ""} disabled={busy} initialLevel={item.hintLevelUsed} /><div className="muted" style={{ marginTop: 8 }}>다시 도전 {item.attemptCount}회</div></>}</div>)}</div> : <div className="panel" style={{ textAlign: "center" }}><div className="completion-seal">확인 완료</div><h2>찾을 단서가 없어요!</h2><p>글을 멋지게 썼네요. 다음에도 편하게 써봐요.</p></div>}
           <div className="row-actions"><button className="btn secondary" onClick={() => setPage("write")}>다음 학습 만들기</button><button className="btn green" onClick={async () => { if (token && student) try { await refreshStudentData(token, student); } catch {} setPage("today"); notify("오늘의 탐정 활동을 기록했어요!"); }}>{writingErrors.every(item => item.solved) ? "복습 마치고 노트로" : "저장하고 나중에 이어하기"}</button></div>
         </>}
       </section>

@@ -3,8 +3,8 @@ export type Question = { id: string; category: string; questionType?: string; pr
 export type QuestionReviewItem = { id: string; category: string; questionType?: string; prompt: string; audioText?: string | null; choices: string[]; reviewAttempts: number; solved: boolean };
 export type QuestionReviewChapter = { chapterDate: string; chapterNumber: number; questions: QuestionReviewItem[] };
 export type WritingError = {
-  id: string; original: string; correct: string; startIndex: number; endIndex: number; category: string;
-  explanation: string; hintLevel1: string; hintLevel2: string; choices: string[]; attemptCount: number; hintLevelUsed: number; solved: boolean;
+  id: string; original: string; correct: string | null; startIndex: number; endIndex: number; category: string;
+  explanation: string | null; hintLevel1: string | null; hintLevel2: string | null; choices: string[]; attemptCount: number; hintLevelUsed: number; solved: boolean;
 };
 export type Writing = { id: string; text: string; createdAt: string; errors: WritingError[] };
 export type WeeklyReport = {
