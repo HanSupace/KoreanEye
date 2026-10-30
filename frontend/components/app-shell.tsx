@@ -4,6 +4,7 @@ import { containsProfanity, profanityTitle, profanityMessage } from "@/lib/profa
 import LoadingIndicator from "./loading-indicator";
 import ActivityModal from "./activity-modal";
 import WritingReviewList from "./writing-review-list";
+import WeeklyReport from "./weekly-report";
 import { Quests, Ranking } from "./activity-panels";
 import { NavIcon } from "./detective-art";
 
@@ -12,7 +13,7 @@ import HandwritingPad, { InputMode, InputModePicker } from "./handwriting-pad";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, Question, QuestionReviewChapter, QuestionReviewItem, Student, Writing, WritingError } from "@/lib/api";
 
-type Page = "home" | "today" | "questions" | "write" | "writingResult" | "review" | "quests" | "ranking" | "addStudent" | "mypage";
+type Page = "weeklyReport" | "home" | "today" | "questions" | "write" | "writingResult" | "review" | "quests" | "ranking" | "addStudent" | "mypage";
 type AuthResult = { token: string; username: string; expiresAt: string };
 type AttemptResult = { correct: boolean; message: string; answer?: string | null; correctExpression?: string | null; attemptCount?: number };
 type Daily = { questionsDone: boolean; writingDone: boolean; reviewDone: boolean; completedCount: number };
@@ -437,7 +438,7 @@ export default function AppShell() {
     setStory(""); setWriting(null); setWritingInputMode(preferredInputMode); setPage("write"); setSidebarOpen(false); setError("");
   };
   const renderToday = () => <LearningNotebook key={student?.id} records={records}
-    onQuestions={startQuestions} />;
+    onQuestions={startQuestions} onWeeklyReport={() => setPage("weeklyReport")} />;
 
   const renderQuestions = () => <QuestionExercise question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={submitQuestion} onNext={nextQuestion} onRetry={() => { setQResult(null); setQSelected(""); }} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={recognizeHandwriting} />;
 
@@ -537,6 +538,7 @@ export default function AppShell() {
     { id: "quests", icon: "quests", label: "퀘스트" },
     { id: "ranking", icon: "ranking", label: "랭킹" },
     { id: "review", icon: "review", label: "복습" },
+    { id: "weeklyReport", icon: "weeklyReport", label: "주간 리포트" },
     { id: "mypage", icon: "mypage", label: "마이페이지" },
   ];
   const navigate = (target: Page) => {
@@ -565,7 +567,7 @@ export default function AppShell() {
     </aside>
     <div className="app-main-column">
       <header className="app-topbar"><button className="mobile-menu-button" aria-label="메뉴 열기" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(v => !v)}>☰</button><div className="mobile-brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정단</div><div className="topbar-title"><span className="breadcrumb">한글탐정단</span><span className="breadcrumb-slash">/</span> {menuItems.find(item => item.id === page)?.label ?? "나의 학습"}</div><div className="topbar-right">{students.length > 1 && <label className="topbar-student">탐정<select aria-label="탐정 선택" value={student.id} onChange={e => switchStudent(e.target.value)}>{students.map(s => <option key={s.id} value={s.id}>{s.name} · 초{s.grade}</option>)}</select></label>}<span className="topbar-streak">오늘의 미션 {Number(daily.questionsDone)+Number(daily.writingDone)} / 2 완료</span><button className="logout-button" onClick={logout} aria-label={`${username} 로그아웃`}>로그아웃</button></div></header>
-      <main className="app-main-content">{(studentLoading || detailState === "loading") && ["home", "today", "quests", "review"].includes(page) ? <div className="learning-record-loading"><div className="panel"><LoadingIndicator message="학습 기록을 불러오고 있어요…" /><p className="muted">잠시만 기다려 주세요. 글쓰기는 메뉴에서 바로 시작할 수 있어요.</p></div></div> : (studentLoadError || detailState === "error") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>학습 기록을 모두 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "writingResult" ? renderWritingResult() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
+      <main className="app-main-content">{(studentLoading || detailState === "loading") && ["home", "today", "quests", "review"].includes(page) ? <div className="learning-record-loading"><div className="panel"><LoadingIndicator message="학습 기록을 불러오고 있어요…" /><p className="muted">잠시만 기다려 주세요. 글쓰기는 메뉴에서 바로 시작할 수 있어요.</p></div></div> : (studentLoadError || detailState === "error") && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>학습 기록을 모두 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "writingResult" ? renderWritingResult() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "weeklyReport" ? <WeeklyReport key={`${token}:${student.id}`} token={token} studentId={student.id} categoryNames={categoryNames} onReview={() => navigate("review")} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
     </div>{modal && <ActivityModal kind={modal.kind} title={modal.title} message={modal.message}>{modal.action ? <button className="btn" onClick={modal.action.run}>{modal.action.label}</button> : modal.kind === "success" ? <button className="btn" onClick={nextQuestion}>다음 문제</button> : modal.kind === "failure" ? <><button className="btn secondary" onClick={() => { setModal(null); setQResult(null); setQSelected(""); }}>다시 풀기</button><button className="btn" onClick={skipQuestion}>건너뛰기</button></> : modal.kind === "error" ? <><button className="btn secondary" onClick={() => setModal(null)}>닫기</button><button className="btn" onClick={() => modal.retry?.()}>다시 시도</button></> : null}</ActivityModal>}{busy && !modal && <div className="busy-status"><LoadingIndicator message="처리하고 있어요…" /></div>}{toast && <div className="toast" role="status">{toast}</div>}{error && token && <div className="toast error-toast" role="alert" onClick={() => setError("")}>{error}　×</div>}
   </div>;
 }

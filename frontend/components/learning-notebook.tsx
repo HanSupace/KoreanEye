@@ -2,15 +2,15 @@
 
 export type DayRecord = { date: string; questionsSolved: number; attempts: number; writingCount: number; remaining: number; completedCount: number; chaptersCompleted?: number; notes: { id: string; text: string; remaining: number }[] };
 
-export default function LearningNotebook({ records, onQuestions }: {
-  records: DayRecord[]; onQuestions: () => void;
+export default function LearningNotebook({ records, onQuestions, onWeeklyReport }: {
+  records: DayRecord[]; onQuestions: () => void; onWeeklyReport: () => void;
 }) {
   const completedChapters = records.reduce((count, record) => count + (record.chaptersCompleted ?? (record.questionsSolved >= 10 ? 1 : 0)), 0);
   const activeIndex = completedChapters;
   const nodes = Array.from({ length: Math.max(10, activeIndex + 2) }, (_, index) => index);
 
   return <div className="content notebook-content learning-path-page">
-    <header className="notebook-heading compact-notebook-heading"><h1>오늘의 학습</h1></header>
+    <header className="notebook-heading compact-notebook-heading weekly-report-shortcut-heading"><h1>오늘의 학습</h1><button type="button" className="btn small secondary" onClick={onWeeklyReport}>주간 리포트 보기</button></header>
 
     <section className="today-case simple-learning-path" aria-label="학습 세트">
       <div className="duo-path">
