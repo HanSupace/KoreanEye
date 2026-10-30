@@ -1,0 +1,216 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const ts = require('typescript');
+
+function load(file, mocks) {
+  const filename = path.join(__dirname, '..', file);
+  const source = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  const exports = {};
+  vm.runInNewContext(source, { exports, AbortController, Error, ...mocks.globals,
+    require(name) {
+      if (name in mocks) return mocks[name];
+      if (name === 'react/jsx-runtime') return require(name);
+      return new Proxy({}, { get: () => () => null });
+    },
+  }, { filename });
+  return exports;
+}
+function harness(file, initial = [], mocks = {}) {
+  const values = initial.slice(), refs = [], effects = [];
+  let si, ri, ei;
+  const component = load(file, { ...mocks, react: {
+    useState(value) { const i = si++; if (!(i in values)) values[i] = value;
+      return [values[i], next => { values[i] = typeof next === 'function' ? next(values[i]) : next; }]; },
+    useRef(value) { return refs[ri++] ??= { current: value }; },
+    useCallback: fn => fn,
+    useEffect(fn, deps) {
+      const i = ei++, old = effects[i];
+      if (!old || deps.some((dep, j) => dep !== old.deps[j])) effects[i] = { fn, deps, old, pending: true };
+    },
+  } }).default;
+  return { values,
+    render(props = {}) {
+      si = ri = ei = 0;
+      const tree = component(props);
+      for (const effect of effects) if (effect.pending) {
+        effect.old?.cleanup?.(); effect.cleanup = effect.fn(); effect.pending = false;
+      }
+      return tree;
+    },
+    // Modal ref is assigned by React before effects run in the browser.
+    refs,
+    unmount() { effects.forEach(effect => effect.cleanup?.()); },
+  };
+}
+function find(node, predicate) {
+  if (Array.isArray(node)) { for (const child of node) { const found = find(child, predicate); if (found) return found; } }
+  else if (node && typeof node === 'object') { if (predicate(node)) return node; return find(node.props?.children, predicate); }
+}
+function text(node) {
+  if (Array.isArray(node)) return node.map(text).join('');
+  if (node && typeof node === 'object') return text(node.props?.children);
+  return typeof node === 'string' || typeof node === 'number' ? String(node) : '';
+}
+const button = (tree, label) => find(tree, node => node.type === 'button' && text(node) === label);
+const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+const flush = () => new Promise(resolve => setImmediate(resolve));
+function shell(api, page = 'questions') {
+  const initial = [];
+  Object.assign(initial, { 0: 'token', 1: 'owner', 2: [{ id: 'student' }], 3: { id: 'student', name: '탐정', grade: 1 },
+    4: page, 5: false, 15: [{ id: 'q1', choices: ['a', 'b'] }, { id: 'q2', choices: [] }], 21: 'a', 23: '오늘 친구와 놀았다.' });
+  return harness('components/app-shell.tsx', initial, {
+    '@/lib/api': { api, ApiError: class extends Error {} },
+    '@/lib/profanity': { containsProfanity: () => false },
+    globals: { window: { setTimeout: () => 0 } },
+  });
+}
+
+test('skip waits for server save, blocks duplicate clicks, and advances without waiting for history', async () => {
+  const save = deferred(), calls = [];
+  const h = shell((url) => { calls.push(url); return save.promise; });
+  const exercise = find(h.render(), node => node.props?.onLater);
+  const first = exercise.props.onLater();
+  await exercise.props.onLater();
+  assert.equal(h.values[20], 0);
+  assert.equal(find(h.render(), node => node.props?.kind === 'loading').props.title, '복습 노트에 담고 있어요...');
+  assert.equal(calls.length, 1);
+  save.resolve(); await first;
+  assert.equal(h.values[20], 1);
+  assert.equal(h.values[6], false);
+  assert.equal(find(h.render(), node => node.props?.kind === 'loading'), undefined);
+  assert.deepEqual(calls, ['/questions/q1/skip']);
+});
+
+test('last skip refreshes records once after saving instead of twice', async () => {
+  const calls = [];
+  const h = shell(async url => { calls.push(url); return []; });
+  h.values[20] = 1;
+  await find(h.render(), node => node.props?.onLater).props.onLater();
+  await flush();
+  assert.equal(h.values[4], 'today');
+  for (const suffix of ['daily-learning', 'learning-history', 'question-reviews']) {
+    assert.equal(calls.filter(url => url.endsWith(suffix)).length, 1);
+  }
+});
+
+test('skip failure ends loading, keeps the question and allows retry', async () => {
+  const h = shell(async () => { throw new Error('offline'); });
+  await find(h.render(), node => node.props?.onLater).props.onLater();
+  assert.equal(h.values[20], 0);
+  assert.equal(h.values[6], false);
+  assert.ok(find(h.render(), node => node.props?.kind === 'error'));
+});
+
+test('rapid menu navigation and repeated active menu clicks share in-flight record requests', async () => {
+  const pending = deferred(), calls = [];
+  const h = shell(url => { calls.push(url); return pending.promise; }, 'write');
+  button(h.render(), '나의 학습').props.onClick();
+  button(h.render(), '퀘스트').props.onClick();
+  button(h.render(), '퀘스트').props.onClick();
+  assert.equal(calls.length, 3);
+  pending.resolve([]); await flush();
+  assert.equal(h.values[7], false);
+});
+
+for (const outcome of ['success', 'failure']) {
+  test(`late question ${outcome} cannot restore modal or navigate after leaving page`, async () => {
+    const pending = deferred();
+    const h = shell(() => pending.promise);
+    const work = find(h.render(), node => node.props?.onSubmit).props.onSubmit();
+    button(h.render(), '오늘의 글쓰기').props.onClick(); h.render();
+    assert.equal(h.values[6], false);
+    if (outcome === 'success') pending.resolve({ correct: true }); else pending.reject(new Error('late error'));
+    await work;
+    assert.equal(h.values[4], 'write');
+    assert.equal(h.values[22], null);
+    assert.equal(find(h.render(), node => node.props?.kind), undefined);
+  });
+}
+
+test('failed record requests clear loading and show retry', async () => {
+  const h = shell(async () => { throw new Error('offline'); }, 'write');
+  button(h.render(), '나의 학습').props.onClick(); await flush();
+  assert.equal(h.values[7], false);
+  assert.ok(button(h.render(), '다시 불러오기'));
+});
+
+test('review completion locks immediately before React rerenders and unlocks after failure', async () => {
+  const pending = deferred(); let calls = 0;
+  const writing = { id: 'w', text: '원문', createdAt: '2026-10-30', errors: [{ id: 'e', original: '표현', solved: false }] };
+  const h = harness('components/writing-review-list.tsx', [[writing], false, false], {
+    '@/lib/api': { api: (_, options) => options.method === 'POST' ? (calls++, pending.promise) : new Promise(() => {}) },
+  });
+  const props = { token: 'token', studentId: 'student', categoryNames: {}, onWrite() {} };
+  const complete = button(h.render(props), '복습 완료').props.onClick;
+  complete(); complete(); assert.equal(calls, 1);
+  pending.reject(new Error('offline')); await flush();
+  assert.equal(h.values[4], null);
+  assert.equal(h.values[0][0].errors[0].solved, false);
+  assert.ok(h.values[3]);
+});
+
+function modalHarness() {
+  const timers = new Map(); let id = 0;
+  const dialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };
+  const document = { activeElement: null, body: { style: { overflow: 'auto' } } };
+  const h = harness('components/activity-modal.tsx', [], { globals: { document, window: {
+    setTimeout(fn, delay) { assert.equal(delay, 150); timers.set(++id, fn); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  } } });
+  // Pre-attach the dialog, matching commit order in React.
+  h.refs[0] = { current: dialog };
+  return { h, dialog, document, timers, tick() { for (const [id, fn] of timers) { timers.delete(id); fn(); } } };
+}
+test('fast modal completion cancels display timer and shows result immediately', () => {
+  const m = modalHarness();
+  m.h.render({ kind: 'loading', title: '대기' });
+  assert.equal(m.dialog.open, false);
+  m.h.render({ kind: 'success', title: '완료' });
+  assert.equal(m.dialog.open, true);
+  assert.equal(m.timers.size, 0);
+  m.h.unmount(); assert.equal(m.document.body.style.overflow, 'auto');
+});
+test('fast loading removed before display never opens or locks scrolling', () => {
+  const m = modalHarness(); m.h.render({ kind: 'loading', title: '대기' }); m.h.unmount(); m.tick();
+  assert.equal(m.dialog.open, false);
+  assert.equal(m.document.body.style.overflow, 'auto');
+});
+test('slow loading remains visible until real completion and closes without minimum duration', () => {
+  const m = modalHarness(); m.h.render({ kind: 'loading', title: '대기' }); m.tick();
+  assert.equal(m.dialog.open, true);
+  assert.equal(m.document.body.style.overflow, 'hidden');
+  m.h.unmount(); assert.equal(m.dialog.open, false);
+  assert.equal(m.document.body.style.overflow, 'auto');
+});
+
+test('API preserves caller cancellation and does not impose a processing deadline', async () => {
+  const pending = deferred(), controller = new AbortController(); let options;
+  const { api } = load('lib/api.ts', { globals: { fetch: (_, init) => { options = init; return pending.promise; } } });
+  const request = api('/ocr/recognize', { method: 'POST', signal: controller.signal }, 'token');
+  assert.equal(options.signal, controller.signal);
+  assert.equal(options.headers.Authorization, 'Bearer token');
+  pending.resolve({ ok: true, status: 200, text: async () => '{"text":"손글씨"}' });
+  assert.equal((await request).text, '손글씨');
+});
+
+test('OCR locks before rerender, retains loading until response, and releases it on failure', async () => {
+  const pending = deferred(); let calls = 0;
+  const h = harness('components/handwriting-pad.tsx', [], {});
+  const props = { onRecognize: () => { calls++; return pending.promise; } };
+  h.render(props);
+  h.refs[0].current = { toDataURL: () => 'data:image/png;base64,cG5n' };
+  h.values[0] = true;
+  const recognize = button(h.render(props), '글씨를 텍스트로 바꾸기').props.onClick;
+  const request = recognize(); await recognize();
+  assert.equal(calls, 1);
+  assert.equal(h.values[1], true);
+  pending.reject(new Error('OCR offline'));
+  await assert.rejects(request);
+  assert.equal(h.values[1], false);
+  assert.equal(h.values[0], true);
+});

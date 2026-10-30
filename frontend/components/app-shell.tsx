@@ -116,6 +116,18 @@ export default function AppShell() {
   const writingRequest = useRef(false);
   const skipRequest = useRef(false);
   const rewriteRequest = useRef(false);
+  const reviewRequest = useRef(false);
+  const hintRequest = useRef(false);
+  const openReviewRequest = useRef(false);
+  const refreshRequest = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const activityScope = useRef({ token, studentId: student?.id, page });
+  if (activityScope.current.token !== token || activityScope.current.studentId !== student?.id || activityScope.current.page !== page) {
+    activityScope.current = { token, studentId: student?.id, page };
+  }
+  useEffect(() => () => {
+    activityScope.current = { ...activityScope.current };
+    setModal(null); setBusy(false);
+  }, [token, student?.id, page]);
   const modalError = (e: unknown, retry: () => void) => setModal({ kind: "error", title: "잠시 문제가 생겼어요", message: e instanceof Error ? e.message : "연결을 확인하고 다시 시도해 주세요.", retry });
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
@@ -144,12 +156,14 @@ export default function AppShell() {
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
   const fail = useCallback((e: unknown) => setError(e instanceof ApiError ? e.message : "서버에 연결하지 못했어요. API와 데이터베이스 상태를 확인해 주세요."), []);
 
-  const refreshStudentData = useCallback(async (currentToken: string, currentStudent: Student, preserveQuestionSet = false) => {
+  const refreshStudentData = useCallback((currentToken: string, currentStudent: Student, force = false): Promise<void> => {
+    const key = `${currentToken}:${currentStudent.id}`;
+    if (!force && refreshRequest.current?.key === key) return refreshRequest.current.promise;
     const request = ++dataRequest.current;
     setStudentLoading(true); setStudentLoadError(false);
     setDetailStatus({ daily: "loading", review: "loading" });
     const current = () => request === dataRequest.current;
-    await Promise.all([
+    const promise = Promise.all([
       api<Daily>(`/students/${currentStudent.id}/daily-learning`, {}, currentToken)
         .then(value => { if (current()) { setDaily(value); setDetailStatus(status => ({ ...status, daily: "ready" })); } })
         .catch(() => { if (current()) setDetailStatus(status => ({ ...status, daily: "error" })); }),
@@ -160,7 +174,11 @@ export default function AppShell() {
       api<QuestionReviewChapter[]>(`/students/${currentStudent.id}/question-reviews`, {}, currentToken)
         .then(value => { if (current()) { setQuestionReviewChapters(value); setDetailStatus(status => ({ ...status, review: "ready" })); } })
         .catch(() => { if (current()) setDetailStatus(status => ({ ...status, review: "error" })); }),
-    ]);
+    ]).then(() => {}).finally(() => {
+      if (refreshRequest.current?.promise === promise) refreshRequest.current = null;
+    });
+    refreshRequest.current = { key, promise };
+    return promise;
   }, []);
 
   const loadSession = useCallback(async (currentToken: string, currentUsername: string, savedStudentId?: string) => {
@@ -225,6 +243,7 @@ export default function AppShell() {
   const logout = () => {
     setEditingProfile(false); setDeletingAccount(false); setAccountError(""); setStory(""); setHints({}); setQuestionReviewChapters([]); setReviewSelections({}); setReviewResults({});
     dataRequest.current++; setStudentLoading(false); setStudentLoadError(false);
+    refreshRequest.current = null;
     localStorage.removeItem(STORE); setToken(null); setUsername(""); setStudents([]); setStudent(null); setRecords([]); setQuestions([]); setWriting(null); setPreferredInputMode("TYPE"); setPage("home"); setError("");
   };
 
@@ -255,22 +274,27 @@ export default function AppShell() {
       return;
     }
     answerRequest.current = true; setBusy(true); setError("");
+    const scope = activityScope.current;
     setModal({ kind: "loading", title: "정답을 확인하고 있어요..." });
     try {
       const result = await api<AttemptResult>(`/questions/${currentQuestion.id}/attempt`, { method: "POST", body: JSON.stringify({ studentId: student.id, answer: qSelected }) }, token);
+      if (activityScope.current !== scope) return;
       setQResult(result);
       setModal(result.correct ? { kind: "success", title: "정답이에요!", message: "멋지게 단서를 찾았어요!" } : { kind: "failure", title: "다시 도전해 봐요!", message: "조금만 더 생각해 볼까요?" });
       if (result.correct) {
         setQuestions(items => items.map(item => item.id === currentQuestion.id ? { ...item, correct: true } : item));
       }
-    } catch (e) { modalError(e, submitQuestion); } finally { answerRequest.current = false; setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) modalError(e, submitQuestion); } finally { answerRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const submitQuestionReview = async (item: QuestionReviewItem) => {
-    if (!token || !reviewSelections[item.id] || item.solved) return;
+    if (!token || !reviewSelections[item.id] || item.solved || busy || reviewRequest.current) return;
+    reviewRequest.current = true;
+    const scope = activityScope.current;
     setBusy(true); setError("");
     try {
       const result = await api<AttemptResult>(`/question-reviews/${item.id}/attempt`, { method: "POST", body: JSON.stringify({ answer: reviewSelections[item.id] }) }, token);
+      if (activityScope.current !== scope) return;
       setReviewResults(current => ({ ...current, [item.id]: result }));
       setQuestionReviewChapters(chapters => chapters.map(chapter => ({
         ...chapter,
@@ -278,12 +302,12 @@ export default function AppShell() {
           ? { ...question, reviewAttempts: question.reviewAttempts + 1, solved: result.correct }
           : question),
       })));
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) fail(e); } finally { reviewRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const nextQuestion = () => {
     setModal(null);
-    if (qIndex >= questions.length - 1) { setPage("today"); setQIndex(0); setQResult(null); setQSelected(""); if (token && student) void refreshStudentData(token, student); notify("이번 문제 풀이를 마쳤어요. 학습 기록을 확인해 보세요."); return; }
+    if (qIndex >= questions.length - 1) { setPage("today"); setQIndex(0); setQResult(null); setQSelected(""); if (token && student) void refreshStudentData(token, student, true); notify("이번 문제 풀이를 마쳤어요. 학습 기록을 확인해 보세요."); return; }
     setQIndex(n => n + 1); setQResult(null); setQSelected("");
   };
 
@@ -291,13 +315,14 @@ export default function AppShell() {
     if (!token || !student || !questions[qIndex] || busy || skipRequest.current) return;
     if (offlineQuestions) { setError("복습 노트에 저장하려면 인터넷 연결이 필요해요."); return; }
     skipRequest.current = true; setBusy(true); setError("");
+    const scope = activityScope.current;
     setModal({ kind: "loading", title: "복습 노트에 담고 있어요..." });
     try {
       await api<void>(`/questions/${questions[qIndex].id}/skip`, { method: "POST", body: JSON.stringify({ studentId: student.id }) }, token);
-      await refreshStudentData(token, student, true);
+      if (activityScope.current !== scope) return;
       notify("이 문제를 복습 노트에 담았어요.");
       nextQuestion();
-    } catch (e) { modalError(e, skipQuestion); } finally { skipRequest.current = false; setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) modalError(e, skipQuestion); } finally { skipRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const profanityBlocked = containsProfanity(story);
@@ -306,25 +331,28 @@ export default function AppShell() {
     if (busy || writingRequest.current) return;
     if (!token || !student || !story.trim()) { setError("한 문장만 적어도 좋아요."); return; }
     const selectedId = student.id;
+    const scope = activityScope.current;
     writingRequest.current = true;
     setBusy(true); setError("");
     setModal({ kind: "loading", title: "글 속 단서를 찾고 있어요..." });
     try {
       const result = await api<Writing>(`/students/${student.id}/writings`, { method: "POST", body: JSON.stringify({ text: story }) }, token);
-      if (activeStudent.current !== selectedId) return;
+      if (activeStudent.current !== selectedId || activityScope.current !== scope) return;
       setModal(null); setWriting(result); setHints({}); setPage("writingResult");
-      void refreshStudentData(token, student);
-    } catch (e) { modalError(e, analyzeWriting); } finally { writingRequest.current = false; setBusy(false); }
+      void refreshStudentData(token, student, true);
+    } catch (e) { if (activityScope.current === scope) modalError(e, analyzeWriting); } finally { writingRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const recognizeHandwriting = async (image: string) => {
     if (!token) return "";
+    const scope = activityScope.current;
     setError("");
     try {
       const result = await api<{ text: string }>("/ocr/recognize", { method: "POST", body: JSON.stringify({ image }) }, token);
+      if (activityScope.current !== scope) return "";
       if (!result.text.trim()) { setError("글씨를 찾지 못했어요. 조금 더 크게 써서 다시 시도해 주세요."); return ""; }
       return result.text;
-    } catch (e) { fail(e); return ""; }
+    } catch (e) { if (activityScope.current === scope) fail(e); return ""; }
   };
 
   const savePreferredInputMode = async (mode: InputMode) => {
@@ -340,32 +368,37 @@ export default function AppShell() {
     rewriteRequest.current = true;
     const writingId = writing.id;
     const studentId = student?.id;
+    const scope = activityScope.current;
     setBusy(true); setError("");
     setModal({ kind: "loading", title: "정답을 확인하고 있어요..." });
     try {
       const result = await api<AttemptResult>(`/writing-errors/${errorItem.id}/attempt`, { method: "POST", body: JSON.stringify({ answer: input.value }) }, token);
-      if (activeStudent.current !== studentId) return;
+      if (activeStudent.current !== studentId || activityScope.current !== scope) return;
       const applyResult = () => setWriting(w => w?.id === writingId ? { ...w, errors: w.errors.map(e => e.id === errorItem.id ? { ...e, attemptCount: result.attemptCount ?? e.attemptCount + 1, solved: result.correct } : e) } : w);
       if (result.correct) {
         setModal({ kind: "success", title: "정답이에요!", message: "복습을 완료했어요.", action: { label: "확인", run: () => {
           applyResult(); setModal(null);
-          if (student) void refreshStudentData(token, student);
+          if (student) void refreshStudentData(token, student, true);
         } } });
       } else {
         applyResult();
         setModal({ kind: "failure", title: "다시 도전해 봐요!", message: "표현을 다시 생각해 보세요.", action: { label: "다시 풀기", run: () => { setModal(null); input.focus(); } } });
       }
-    } catch (e) { modalError(e, () => void submitRewrite(errorItem, input)); }
-    finally { rewriteRequest.current = false; setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) modalError(e, () => void submitRewrite(errorItem, input)); }
+    finally { rewriteRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const showHint = async (item: WritingError) => {
-    if (!token) return; setBusy(true);
+    if (!token || busy || hintRequest.current) return;
+    hintRequest.current = true;
+    const scope = activityScope.current;
+    setBusy(true);
     try {
       const result = await api<{ level: number; hint: string }>(`/writing-errors/${item.id}/hint`, { method: "POST", body: "{}" }, token);
+      if (activityScope.current !== scope) return;
       setHints(h => ({ ...h, [item.id]: result.hint }));
       setWriting(w => w ? { ...w, errors: w.errors.map(e => e.id === item.id ? { ...e, hintLevelUsed: result.level } : e) } : w);
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) fail(e); } finally { hintRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const renderAddStudent = () => <div className="content"><div className="section-head"><div><h1>탐정 프로필 만들기</h1><p>아이의 이름과 학년만 적어주세요.</p></div><button className="logout-button" onClick={logout}>로그아웃</button></div><form className="panel" onSubmit={createStudent} style={{ maxWidth: 520, marginInline: "auto" }}><label className="field-label">이름<input className="field-input" name="name" required maxLength={40} placeholder="민수" /></label><label className="field-label">학년<select className="field-input" name="grade" defaultValue="2"><option value="1">초등학교 1학년</option><option value="2">초등학교 2학년</option><option value="3">초등학교 3학년</option></select></label><label className="field-label">별명 <span className="muted">(선택)</span><input className="field-input" name="nickname" maxLength={40} placeholder="꼬마 탐정" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="btn" disabled={busy}>{busy ? "저장 중…" : "프로필 저장"}</button></form></div>;
@@ -373,25 +406,32 @@ export default function AppShell() {
   const renderAuth = () => <main className="auth-page"><div className="auth-card"><div className="auth-brand"><span className="auth-mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span><span>한글탐정단</span></div><div className="auth-heading"><span className="auth-kicker">탐정 본부</span><h1>{authMode === "login" ? "다시 만나 반가워요" : "새 탐정 대원을 맞이해요"}</h1></div><div className="auth-tabs" role="tablist" aria-label="로그인 또는 회원가입"><button type="button" role="tab" aria-selected={authMode === "login"} className={authMode === "login" ? "selected" : ""} onClick={() => { setAuthMode("login"); setError(""); }}>로그인</button><button type="button" role="tab" aria-selected={authMode === "signup"} className={authMode === "signup" ? "selected" : ""} onClick={() => { setAuthMode("signup"); setError(""); }}>회원가입</button></div><form className="auth-form" onSubmit={authenticate}><label className="field-label">아이디<input className="field-input" type="text" name="username" autoComplete="username" required placeholder="사용할 아이디를 입력해 주세요" /></label><label className="field-label">비밀번호<input className="field-input" type="password" name="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required placeholder="비밀번호를 입력해 주세요" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="btn auth-submit" disabled={busy}>{busy ? <LoadingIndicator message="확인하고 있어요…" /> : authMode === "login" ? "탐정 본부 들어가기" : "탐정 계정 만들기"}</button></form><p className="auth-footnote">학습 기록은 로그인한 탐정 계정에 안전하게 저장돼요.</p></div></main>;
 
   const openReview = async (id: string) => {
-    if (!token) return;
+    if (!token || busy || openReviewRequest.current) return;
+    openReviewRequest.current = true;
+    const scope = activityScope.current;
     setBusy(true); setError("");
-    try { setWriting(await api<Writing>(`/writings/${id}`, {}, token)); setHints({}); setError(""); setPage("writingResult"); }
-    catch (e) { fail(e); } finally { setBusy(false); }
+    try {
+      const result = await api<Writing>(`/writings/${id}`, {}, token);
+      if (activityScope.current !== scope) return;
+      setWriting(result); setHints({}); setError(""); setPage("writingResult");
+    }
+    catch (e) { if (activityScope.current === scope) fail(e); } finally { openReviewRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
   const startQuestions = async () => {
     if (!token || !student || questionRequest.current || busy) return;
     questionRequest.current = true;
     setModal({ kind: "loading", title: "단어 찾기를 준비하고 있어요..." });
     const selectedId = student.id;
+    const scope = activityScope.current;
     setBusy(true); setError("");
     try {
       const chapterQuestions = await api<Question[]>(`/students/${student.id}/questions/today`, {}, token);
-      if (activeStudent.current !== selectedId) return;
+      if (activeStudent.current !== selectedId || activityScope.current !== scope) return;
       if (!chapterQuestions.length) throw new Error("Empty chapter");
       setModal(null); setQuestions(chapterQuestions); setOfflineQuestions(false);
       const firstUnsolved = chapterQuestions.findIndex(question => !question.correct);
       setQIndex(firstUnsolved < 0 ? 0 : firstUnsolved); setQResult(null); setQSelected(""); setDictationInputMode(preferredInputMode); setPage("questions");
-    } catch (e) { modalError(e, startQuestions); } finally { questionRequest.current = false; setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) modalError(e, startQuestions); } finally { questionRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
   const startWriting = () => {
     setStory(""); setWriting(null); setWritingInputMode(preferredInputMode); setPage("write"); setSidebarOpen(false); setError("");
@@ -401,7 +441,7 @@ export default function AppShell() {
 
   const renderQuestions = () => <QuestionExercise question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={submitQuestion} onNext={nextQuestion} onRetry={() => { setQResult(null); setQSelected(""); }} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={recognizeHandwriting} />;
 
-  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><div className="writing-input-heading"><label htmlFor="story" style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" /></div>{writingInputMode === "HANDWRITING" ? <><HandwritingPad onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" aria-invalid={profanityBlocked} aria-describedby={profanityBlocked ? "writing-language-warning" : undefined} className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{profanityBlocked && <div id="writing-language-warning" className="form-error" role="alert"><strong>{profanityTitle}</strong><p>{profanityMessage}</p></div>}{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy || profanityBlocked}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
+  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><div className="writing-input-heading"><label htmlFor="story" style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" /></div>{writingInputMode === "HANDWRITING" ? <><HandwritingPad allowErasing onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" aria-invalid={profanityBlocked} aria-describedby={profanityBlocked ? "writing-language-warning" : undefined} className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{profanityBlocked && <div id="writing-language-warning" className="form-error" role="alert"><strong>{profanityTitle}</strong><p>{profanityMessage}</p></div>}{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy || profanityBlocked}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
 
   const renderMyPage = () => <div className="content mypage">
     <div className="section-head"><div><h1>마이페이지</h1><p>내 정보와 학습 기록을 한곳에서 관리하세요.</p></div><button className="btn secondary" onClick={() => setPage("addStudent")}>탐정 추가</button></div>
@@ -502,7 +542,7 @@ export default function AppShell() {
   const navigate = (target: Page) => {
     if (target === "questions") { setQIndex(Math.max(0, questions.findIndex(q => !q.correct))); setQResult(null); setQSelected(""); }
     if (target === "write") { startWriting(); return; }
-    if (["today", "home", "quests"].includes(target) && token && student) void refreshStudentData(token, student);
+    if (["today", "home", "quests", "review"].includes(target) && token && student) void refreshStudentData(token, student);
     setPage(target); setSidebarOpen(false);
   };
   const detailState = page === "quests" ? detailStatus.daily : page === "review" ? detailStatus.review : "ready";

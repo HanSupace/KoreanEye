@@ -4730,6 +4730,7 @@ main {
 }
 .handwriting-pad-wrap {
   width: 100%;
+  min-width: 0;
   margin: 10px 0 14px;
 }
 .handwriting-help {
@@ -4740,6 +4741,8 @@ main {
 .handwriting-canvas {
   display: block;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   height: 250px;
   border: 1px solid #e5d7c9;
   border-radius: 12px;
@@ -4747,12 +4750,58 @@ main {
   touch-action: none;
   cursor: crosshair;
 }
+.writing-paper .handwriting-surface {
+  height: 400px;
+  min-height: 280px;
+  max-height: max(320px, min(720px, 85svh));
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid #e5d7c9;
+  border-radius: 12px;
+  background: #fff;
+}
+.writing-paper .handwriting-surface .handwriting-canvas {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+.handwriting-resize-hint {
+  display: none;
+}
+.writing-paper .handwriting-resize-hint {
+  display: block;
+  margin: 6px 0 0;
+  color: #8a7c72;
+  font-size: 12px;
+}
+.writing-paper .handwriting-actions {
+  flex-wrap: wrap;
+}
 .handwriting-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-top: 10px;
+}
+.handwriting-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.handwriting-tools .example-btn {
+  padding: 8px 12px;
+  border: 1px solid #e5d7c9;
+  border-radius: 10px;
+  background: #fffaf3;
+}
+.handwriting-tools .example-btn[aria-pressed="true"] {
+  color: #fffaf3;
+  border-color: #725337;
+  background: #725337;
+}
+.handwriting-canvas.is-erasing {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Ccircle cx='14' cy='14' r='12' fill='%23fffaf3' fill-opacity='.45' stroke='%23725337'/%3E%3C/svg%3E") 14 14, crosshair;
 }
 .recognized-text {
   padding: 10px 12px;
@@ -4796,6 +4845,11 @@ main {
 @media (max-width: 760px) {
   .handwriting-canvas {
     height: 210px;
+  }
+  .writing-paper .handwriting-surface {
+    height: calc(clamp(320px, 60svh, 480px) - 100px);
+    min-height: 240px;
+    max-height: max(280px, min(600px, 85svh));
   }
   .input-mode-picker button {
     padding: 7px 10px;

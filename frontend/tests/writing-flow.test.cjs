@@ -48,6 +48,45 @@ function shell(api) {
 }
 const writing = { id: 'writing-id', text: '오늘 친구랑 가치 놀았다.', createdAt: '2026-10-27T00:00:00Z', analysisProvider: 'rules', errors: [{ id: 'error-id', original: '가치', correct: '같이', category: 'PRONUNCIATION_SPELLING', solved: false }] };
 
+const writingMode = h => find(h.render(), n => n.props?.label === '글쓰기 입력 방식');
+const handwriting = h => find(h.render(), n => n.props?.onRecognize && !n.props?.onSubmit);
+
+test('handwriting OCR sends image to existing endpoint, appends recognized text and preserves text across input modes', async () => {
+  const calls = [];
+  const h = shell(async (...args) => { calls.push(args); return { text: '손으로 쓴 이야기' }; });
+  const original = h.values[23];
+  writingMode(h).props.onChange('HANDWRITING');
+  assert.equal(find(h.render(), n => n.type === 'textarea'), undefined);
+  await handwriting(h).props.onRecognize('encoded-png');
+  assert.equal(calls[0][0], '/ocr/recognize');
+  assert.equal(calls[0][1].method, 'POST');
+  assert.equal(JSON.parse(calls[0][1].body).image, 'encoded-png');
+  assert.equal(calls[0][2], 'mock-token');
+  writingMode(h).props.onChange('TYPE');
+  assert.equal(find(h.render(), n => n.type === 'textarea').props.value, `${original}\n손으로 쓴 이야기`);
+});
+
+for (const response of ['empty', 'failure']) {
+  test(`handwriting OCR ${response} preserves story and displays existing error`, async () => {
+    const h = shell(async () => { if (response === 'failure') throw new Error('network'); return { text: ' ' }; });
+    const original = h.values[23];
+    writingMode(h).props.onChange('HANDWRITING');
+    assert.equal(await handwriting(h).props.onRecognize('encoded-png'), '');
+    assert.equal(h.values[23], original);
+    assert.ok(find(h.render(), n => n.props?.className === 'form-error' && n.props?.role === 'alert'));
+  });
+}
+
+test('recognized profanity uses the existing warning and blocks clue finding', async () => {
+  let posts = 0;
+  const h = shell(async url => { if (url !== '/ocr/recognize') posts++; return { text: '씨발' }; });
+  writingMode(h).props.onChange('HANDWRITING');
+  await handwriting(h).props.onRecognize('encoded-png');
+  const button = find(h.render(), n => n.type === 'button' && text(n) === '단서 찾기');
+  assert.equal(button.props.disabled, true);
+  await button.props.onClick(); assert.equal(posts, 0);
+});
+
 test('analysis success opens result, preserves input, and only explicit action opens review', async () => {
   const calls = [];
   const h = shell(async (url, options) => { calls.push([url, options]); return options?.method === 'POST' ? writing : []; });
