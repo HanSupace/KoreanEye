@@ -23,6 +23,7 @@ public class WritingError {
     @Column(nullable=false) private Instant createdAt = Instant.now();
     protected WritingError() {}
     public WritingError(int startIndex,int endIndex,String original,String correct,String category,String explanation,String hintLevel1,String hintLevel2,String choicesJson) {
+        if(!WritingCandidateValidator.hasCorrection(original,correct))throw new IllegalArgumentException("복습 문제에는 실제 수정 표현이 필요해요.");
         this.startIndex=startIndex;this.endIndex=endIndex;this.original=original;this.correct=correct;this.category=category;this.explanation=explanation;this.hintLevel1=hintLevel1;this.hintLevel2=hintLevel2;this.choicesJson=choicesJson;
     }
     void setWriting(WritingEntry writing) { this.writing=writing; }
@@ -30,7 +31,7 @@ public class WritingError {
     public String getOriginal(){return original;} public String getCorrect(){return correct;} public String getCategory(){return category;} public String getExplanation(){return explanation;}
     public String getHintLevel1(){return hintLevel1;} public String getHintLevel2(){return hintLevel2;} public String getChoicesJson(){return choicesJson;}
     public int getAttemptCount(){return attemptCount;} public int getHintLevelUsed(){return hintLevelUsed;} public boolean isSolved(){return solved;} public Instant getCreatedAt(){return createdAt;}
-    public boolean submit(String answer){attemptCount++;solved=correct.equals(answer.trim());return solved;}
+    public boolean submit(String answer){if(solved)return true;attemptCount++;solved=answer!=null&&correct.equals(answer.trim());return solved;}
     public int nextHint(){hintLevelUsed=Math.min(3,hintLevelUsed+1);return hintLevelUsed;}
     public void completeReview(){solved=true;}
 }

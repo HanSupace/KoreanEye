@@ -76,7 +76,7 @@ public class LearningService implements ApplicationRunner {
         else questions.save(new LearningQuestion(key,"VOCABULARY",2,"LISTEN_AND_TYPE",prompt,answer,choicesJson,answer,explanation));
     }
     @Transactional public List<QuestionDto> today(UUID studentId,String email)throws Exception{
-        StudentProfile student=students.requireOwned(studentId,email); List<LearningQuestion> all=new ArrayList<>(questions.findAllByGradeInOrderByCategoryAsc(List.of(1,2,3)).stream()
+        StudentProfile student=students.requireOwned(studentId,email); List<LearningQuestion> all=new ArrayList<>(questions.findAllAvailableForStudent(List.of(1,2,3),studentId).stream()
             .filter(q -> "MULTIPLE_CHOICE".equals(q.getQuestionType()) ? q.getPrompt().contains("___") : "LISTEN_AND_TYPE".equals(q.getQuestionType()) && q.getAudioText()!=null && !q.getAudioText().isBlank())
             .filter(q -> { if("LISTEN_AND_TYPE".equals(q.getQuestionType())) return true; try { return mapper.readValue(q.getChoicesJson(), new TypeReference<List<String>>(){}).size() >= 2; } catch (Exception ignored) { return false; } })
             .toList());
@@ -84,20 +84,27 @@ public class LearningService implements ApplicationRunner {
         ZoneId zone=ZoneId.of("Asia/Seoul");
         LocalDate chapterDate=LocalDate.now(zone);
         List<LearningChapter> studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
-        Optional<LearningChapter> activeChapter=studentChapters.stream().filter(chapter->!chapter.isComplete()).findFirst();
+        List<QuestionReviewItem> reviews=questionReviews.findAllByStudentIdOrderByChapterDateDescChapterNumberDescCreatedAtAsc(studentId);
+        Optional<LearningChapter> activeChapter=studentChapters.stream().filter(chapter->!chapterMastered(chapter,reviews,attempts.findAllByStudentId(studentId))).findFirst();
         if(activeChapter.isPresent()){
             completeChapterQuestionMix(activeChapter.get(),all);
-            return chapterQuestions(activeChapter.get());
+            return chapterQuestions(activeChapter.get(),reviews,attempts.findAllByStudentId(studentId));
         }
         List<QuestionAttempt> studentAttempts=attempts.findAllByStudentId(studentId);
         Map<UUID,QuestionStats> questionStats=new HashMap<>();
         Map<String,CategoryStats> categoryStats=new HashMap<>();
         Instant now=Instant.now();
         for(QuestionAttempt attempt:studentAttempts){
-            questionStats.computeIfAbsent(attempt.getQuestionId(),ignored->new QuestionStats()).add(attempt);
-            if(attempt.getCreatedAt().isAfter(now.minus(Duration.ofDays(30)))){
-                double decay=decay(attempt.getCreatedAt(),now);
-                categoryStats.computeIfAbsent(attempt.getQuestionCategory(),ignored->new CategoryStats()).addAttempt(attempt.isCorrect(),decay);
+            double decay=attempt.getCreatedAt().isAfter(now.minus(Duration.ofDays(30)))?decay(attempt.getCreatedAt(),now):0;
+            questionStats.computeIfAbsent(attempt.getQuestionId(),ignored->new QuestionStats()).add(attempt,decay);
+            if(decay>0){
+                categoryStats.computeIfAbsent(attempt.getQuestionCategory(),ignored->new CategoryStats()).addAttempt(attempt.isCorrect(),decay,attempt.getCreatedAt());
+            }
+        }
+        for(QuestionReviewItem review:reviews){
+            if(!review.isSolved()&&review.getCreatedAt().isAfter(now.minus(Duration.ofDays(30)))){
+                questionStats.computeIfAbsent(review.getQuestion().getId(),ignored->new QuestionStats()).addExposure(review.getCreatedAt());
+                categoryStats.computeIfAbsent(review.getQuestion().getCategory(),ignored->new CategoryStats()).addExposure(review.getCreatedAt());
             }
         }
         for(WritingError item:errors.findAllByWritingStudentId(studentId)){
@@ -106,15 +113,43 @@ public class LearningService implements ApplicationRunner {
                 categoryStats.computeIfAbsent(item.getCategory(),ignored->new CategoryStats()).addWritingError(item.isSolved(),decay);
             }
         }
-        List<LearningQuestion> picked=selectDailyQuestions(all,questionStats,categoryStats,now);
+        List<LearningQuestion> regularQuestions=all.stream().filter(question->question.getSourceWritingErrorId()==null).toList();
+        Comparator<LearningQuestion> weaknessOrder=questionPriorityOrder(questionStats,categoryStats);
+        List<LearningQuestion> writingQuestions=all.stream().filter(question->question.getSourceWritingErrorId()!=null)
+            .filter(question->{QuestionStats stats=questionStats.get(question.getId());return stats==null||stats.lastAttempt==null||stats.lastAttemptWasWrong;})
+            .sorted(weaknessOrder).limit(2).toList();
+        List<LearningQuestion> picked=new ArrayList<>(selectDailyQuestions(regularQuestions,questionStats,categoryStats,now,writingQuestions.size()));
+        picked.addAll(writingQuestions);
         if(picked.size()!=10)throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"오늘의 10문제를 준비하고 있어요.");
         int nextChapterNumber=studentChapters.stream().mapToInt(LearningChapter::getChapterNumber).max().orElse(0)+1;
         LearningChapter chapter=new LearningChapter(student,chapterDate,nextChapterNumber);
         picked.forEach(chapter::addQuestion);
-        return chapterQuestions(chapters.save(chapter));
+        return chapterQuestions(chapters.save(chapter),List.of(),List.of());
     }
 
-    private List<QuestionDto> chapterQuestions(LearningChapter chapter){
+    @Transactional(readOnly=true) public LearningProgressDto progress(UUID studentId,String email){
+        students.requireOwned(studentId,email);
+        List<LearningChapter> studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
+        List<QuestionReviewItem> reviews=questionReviews.findAllByStudentIdOrderByChapterDateDescChapterNumberDescCreatedAtAsc(studentId);
+        List<QuestionAttempt> studentAttempts=attempts.findAllByStudentId(studentId);
+        return studentChapters.stream().filter(chapter->!chapterMastered(chapter,reviews,studentAttempts)).findFirst()
+            .map(chapter->new LearningProgressDto(chapter.getChapterNumber(),chapterRemaining(chapter,reviews,studentAttempts),chapter.getQuestions().size()))
+            .orElseGet(()->new LearningProgressDto(studentChapters.stream().mapToInt(LearningChapter::getChapterNumber).max().orElse(0)+1,10,10));
+    }
+    private boolean questionMastered(LearningChapter chapter,LearningChapterQuestion chapterQuestion,List<QuestionReviewItem> reviews,List<QuestionAttempt> studentAttempts){
+        UUID questionId=chapterQuestion.getQuestion().getId();
+        QuestionReviewItem review=reviews.stream().filter(item->item.getChapterNumber()==chapter.getChapterNumber()
+            &&item.getQuestion().getId().equals(questionId)).findFirst().orElse(null);
+        boolean hasCorrectAttempt=studentAttempts.stream().anyMatch(attempt->attempt.getQuestionId().equals(questionId)&&attempt.isCorrect());
+        return hasCorrectAttempt||review!=null&&review.isSolved()||review==null&&chapterQuestion.isCompleted();
+    }
+    private boolean chapterMastered(LearningChapter chapter,List<QuestionReviewItem> reviews,List<QuestionAttempt> studentAttempts){
+        return !chapter.getQuestions().isEmpty()&&chapter.getQuestions().stream().allMatch(item->questionMastered(chapter,item,reviews,studentAttempts));
+    }
+    private int chapterRemaining(LearningChapter chapter,List<QuestionReviewItem> reviews,List<QuestionAttempt> studentAttempts){
+        return (int)chapter.getQuestions().stream().filter(item->!questionMastered(chapter,item,reviews,studentAttempts)).count();
+    }
+    private List<QuestionDto> chapterQuestions(LearningChapter chapter,List<QuestionReviewItem> reviews,List<QuestionAttempt> studentAttempts){
         List<LearningChapterQuestion> listening=chapter.getQuestions().stream().filter(item->"LISTEN_AND_TYPE".equals(item.getQuestion().getQuestionType())).toList();
         List<LearningChapterQuestion> choices=chapter.getQuestions().stream().filter(item->"MULTIPLE_CHOICE".equals(item.getQuestion().getQuestionType())).toList();
         String[][] patterns={
@@ -131,7 +166,12 @@ public class LearningService implements ApplicationRunner {
         }
         while(choiceIndex<choices.size())ordered.add(choices.get(choiceIndex++));
         while(listeningIndex<listening.size())ordered.add(listening.get(listeningIndex++));
-        return ordered.stream().map(item->toDto(item.getQuestion(),item.isCompleted())).toList();
+        return ordered.stream().map(item->{
+            QuestionReviewItem review=reviews.stream().filter(value->value.getChapterNumber()==chapter.getChapterNumber()
+                &&value.getQuestion().getId().equals(item.getQuestion().getId())).findFirst().orElse(null);
+            boolean attempted=item.isCompleted()||review!=null||studentAttempts.stream().anyMatch(attempt->attempt.getQuestionId().equals(item.getQuestion().getId()));
+            return toDto(item.getQuestion(),questionMastered(chapter,item,reviews,studentAttempts),attempted);
+        }).toList();
     }
 
     private void completeChapterQuestionMix(LearningChapter chapter,List<LearningQuestion> all){
@@ -147,29 +187,43 @@ public class LearningService implements ApplicationRunner {
         chapters.save(chapter);
     }
 
-    private List<LearningQuestion> selectDailyQuestions(List<LearningQuestion> all,Map<UUID,QuestionStats> questionStats,Map<String,CategoryStats> categoryStats,Instant now){
+    private List<LearningQuestion> selectDailyQuestions(List<LearningQuestion> all,Map<UUID,QuestionStats> questionStats,Map<String,CategoryStats> categoryStats,Instant now,int writingQuestionCount){
         Instant recentCutoff=now.minus(Duration.ofDays(3));
-        Comparator<LearningQuestion> weaknessOrder=Comparator
-            .<LearningQuestion>comparingDouble(q->-categoryStats.getOrDefault(q.getCategory(),CategoryStats.EMPTY).priority())
-            .thenComparing(q->{QuestionStats s=questionStats.get(q.getId());return s==null||s.lastAttempt==null?Instant.MIN:s.lastAttempt;})
-            .thenComparing(LearningQuestion::getSeedKey);
-        List<LearningQuestion> listening = selectQuestionType(all,"LISTEN_AND_TYPE",3,recentCutoff,questionStats,weaknessOrder);
-        List<LearningQuestion> choices = selectQuestionType(all,"MULTIPLE_CHOICE",7,recentCutoff,questionStats,weaknessOrder);
+        Comparator<LearningQuestion> weaknessOrder=questionPriorityOrder(questionStats,categoryStats);
+        Comparator<LearningQuestion> explorationOrder=explorationOrder(questionStats,categoryStats);
+        List<LearningQuestion> listening=selectQuestionType(all,"LISTEN_AND_TYPE",3,1,recentCutoff,questionStats,weaknessOrder,explorationOrder);
+        List<LearningQuestion> choices=selectQuestionType(all,"MULTIPLE_CHOICE",7-writingQuestionCount,1,recentCutoff,questionStats,weaknessOrder,explorationOrder);
         List<LearningQuestion> selected=new ArrayList<>(listening);
         selected.addAll(choices);
         return selected;
     }
-    private List<LearningQuestion> selectQuestionType(List<LearningQuestion> all,String type,int count,Instant recentCutoff,
-            Map<UUID,QuestionStats> questionStats,Comparator<LearningQuestion> weaknessOrder){
+    private Comparator<LearningQuestion> explorationOrder(Map<UUID,QuestionStats> questionStats,Map<String,CategoryStats> categoryStats){
+        return Comparator.<LearningQuestion>comparingInt(q->categoryStats.getOrDefault(q.getCategory(),CategoryStats.EMPTY).attempts==0?0:1)
+            .thenComparing(q->{CategoryStats s=categoryStats.get(q.getCategory());return s==null||s.lastAttempt==null?Instant.MIN:s.lastAttempt;})
+            .thenComparingInt(q->{QuestionStats s=questionStats.get(q.getId());return s==null?0:s.attempts;})
+            .thenComparing(q->{QuestionStats s=questionStats.get(q.getId());return s==null||s.lastAttempt==null?Instant.MIN:s.lastAttempt;})
+            .thenComparing(LearningQuestion::getSeedKey);
+    }
+    private Comparator<LearningQuestion> questionPriorityOrder(Map<UUID,QuestionStats> questionStats,Map<String,CategoryStats> categoryStats){
+        return Comparator.<LearningQuestion>comparingDouble(q->-(categoryStats.getOrDefault(q.getCategory(),CategoryStats.EMPTY).priority()
+                +questionStats.getOrDefault(q.getId(),QuestionStats.EMPTY).priority()))
+            .thenComparing(q->{QuestionStats s=questionStats.get(q.getId());return s==null||s.lastAttempt==null?Instant.MIN:s.lastAttempt;})
+            .thenComparing(LearningQuestion::getSeedKey);
+    }
+    private List<LearningQuestion> selectQuestionType(List<LearningQuestion> all,String type,int count,int explorationCount,Instant recentCutoff,
+            Map<UUID,QuestionStats> questionStats,Comparator<LearningQuestion> weaknessOrder,Comparator<LearningQuestion> explorationOrder){
         List<LearningQuestion> candidates=all.stream().filter(q->type.equals(q.getQuestionType())).toList();
-        List<LearningQuestion> selected=new ArrayList<>(candidates.stream()
+        List<LearningQuestion> eligible=candidates.stream()
             .filter(q->{QuestionStats stats=questionStats.get(q.getId());return stats==null||stats.lastAttempt==null||!stats.lastAttempt.isAfter(recentCutoff);})
-            .sorted(weaknessOrder).limit(count).toList());
+            .toList();
+        int explorationSlots=Math.min(explorationCount,count);
+        List<LearningQuestion> selected=new ArrayList<>(eligible.stream().sorted(weaknessOrder).limit(count-explorationSlots).toList());
+        Set<UUID> selectedIds=selected.stream().map(LearningQuestion::getId).collect(java.util.stream.Collectors.toSet());
+        eligible.stream().filter(q->!selectedIds.contains(q.getId())).sorted(explorationOrder).limit(explorationSlots).forEach(q->{selected.add(q);selectedIds.add(q.getId());});
         if(selected.size()<count){
-            Set<UUID> selectedIds=selected.stream().map(LearningQuestion::getId).collect(java.util.stream.Collectors.toSet());
             candidates.stream().filter(q->!selectedIds.contains(q.getId()))
-                .sorted(Comparator.<LearningQuestion>comparingInt(q->{QuestionStats stats=questionStats.get(q.getId());return stats==null?0:stats.attempts;})
-                    .thenComparing(weaknessOrder))
+                .sorted(Comparator.<LearningQuestion,Instant>comparing(q->{QuestionStats stats=questionStats.get(q.getId());return stats==null||stats.lastAttempt==null?Instant.MIN:stats.lastAttempt;})
+                    .thenComparing(explorationOrder))
                 .limit(count-selected.size()).forEach(selected::add);
         }
         return selected;
@@ -179,24 +233,44 @@ public class LearningService implements ApplicationRunner {
     }
     private static double decay(Instant createdAt,Instant now){return Math.exp(-Duration.between(createdAt,now).toDays()/14.0);}
     private static final class QuestionStats{
-        private int attempts; private Instant lastAttempt;
-        private void add(QuestionAttempt attempt){attempts++;if(lastAttempt==null||attempt.getCreatedAt().isAfter(lastAttempt))lastAttempt=attempt.getCreatedAt();}
+        private static final QuestionStats EMPTY=new QuestionStats();
+        private int attempts; private Instant lastAttempt; private boolean lastAttemptWasWrong; private double pressure;
+        private void add(QuestionAttempt attempt,double decay){
+            attempts++;
+            if(lastAttempt==null||attempt.getCreatedAt().isAfter(lastAttempt)){
+                lastAttempt=attempt.getCreatedAt();lastAttemptWasWrong=!attempt.isCorrect();
+            }
+            pressure+=attempt.isCorrect()?-0.7*decay:2.0*decay;
+        }
+        private void addExposure(Instant exposedAt){attempts++;if(lastAttempt==null||exposedAt.isAfter(lastAttempt)){lastAttempt=exposedAt;lastAttemptWasWrong=true;}}
+        private double priority(){return Math.min(4.0,Math.max(0,pressure));}
     }
     private static final class CategoryStats{
         private static final CategoryStats EMPTY=new CategoryStats();
-        private int attempts; private double pressure;
-        private void addAttempt(boolean correct,double decay){attempts++;pressure+=correct?-0.7*decay:2.0*decay;}
+        private int attempts; private Instant lastAttempt; private double pressure;
+        private void addAttempt(boolean correct,double decay,Instant createdAt){attempts++;if(lastAttempt==null||createdAt.isAfter(lastAttempt))lastAttempt=createdAt;pressure+=correct?-0.7*decay:2.0*decay;}
+        private void addExposure(Instant exposedAt){attempts++;if(lastAttempt==null||exposedAt.isAfter(lastAttempt))lastAttempt=exposedAt;}
         private void addWritingError(boolean solved,double decay){pressure+=solved?-0.5*decay:1.5*decay;}
-        private double priority(){return Math.max(0,pressure);}
+        private double priority(){return Math.min(2.5,Math.max(0,pressure));}
     }
     @Transactional public AttemptResult attempt(UUID questionId,UUID studentId,String email,String answer){
         StudentProfile student=students.requireOwned(studentId,email); LearningQuestion q=questions.findById(questionId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"문제를 찾을 수 없어요."));
+        if(q.getOwnerStudentId()!=null&&!q.getOwnerStudentId().equals(studentId))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"문제를 찾을 수 없어요.");
         String normalizedAnswer=java.text.Normalizer.normalize(answer.trim(),java.text.Normalizer.Form.NFC);
         boolean correct=java.text.Normalizer.normalize(q.getAnswer(),java.text.Normalizer.Form.NFC).equals(normalizedAnswer); attempts.save(new QuestionAttempt(student,q,answer.trim(),correct));
         List<LearningChapter> studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
         LearningChapter questionChapter=studentChapters.stream().filter(chapter->chapter.containsQuestion(questionId)).findFirst().orElse(null);
-        LearningChapter activeChapter=studentChapters.stream().filter(chapter->!chapter.isComplete()).findFirst().orElse(null);
-        if(correct&&questionChapter!=null){boolean updated=questionChapter.getQuestions().stream().anyMatch(item->item.complete(questionId));if(updated)chapters.save(questionChapter);}
+        List<QuestionReviewItem> reviews=questionReviews.findAllByStudentIdOrderByChapterDateDescChapterNumberDescCreatedAtAsc(studentId);
+        LearningChapter activeChapter=studentChapters.stream().filter(chapter->!chapterMastered(chapter,reviews,attempts.findAllByStudentId(studentId))).findFirst().orElse(null);
+        if(correct&&questionChapter!=null){
+            QuestionReviewItem review=reviews.stream().filter(item->item.getChapterNumber()==questionChapter.getChapterNumber()
+                &&item.getQuestion().getId().equals(questionId)&&!item.isSolved()).findFirst().orElse(null);
+            if(review!=null) review.submitReview(answer);
+            questionChapter.getQuestions().stream().filter(item->item.getQuestion().getId().equals(questionId)).findFirst().ifPresent(item->{
+                if(review!=null)item.completeAfterReview();else item.complete(questionId);
+            });
+            chapters.save(questionChapter);
+        }
         if(!correct){
             LocalDate chapterDate=LocalDate.now(ZoneId.of("Asia/Seoul"));
             LearningChapter reviewChapter=questionChapter!=null?questionChapter:activeChapter;
@@ -210,11 +284,11 @@ public class LearningService implements ApplicationRunner {
     @Transactional public void skip(UUID questionId,UUID studentId,String email){
         StudentProfile student=students.requireOwned(studentId,email);
         LearningQuestion q=questions.findById(questionId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND,"문제를 찾을 수 없어요."));
+        if(q.getOwnerStudentId()!=null&&!q.getOwnerStudentId().equals(studentId))throw new ResponseStatusException(HttpStatus.NOT_FOUND,"문제를 찾을 수 없어요.");
         List<LearningChapter> studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
         LearningChapter chapter=studentChapters.stream().filter(item->item.containsQuestion(questionId)).findFirst().orElse(null);
         int chapterNumber=chapter!=null?chapter.getChapterNumber():studentChapters.stream().findFirst().map(LearningChapter::getChapterNumber).orElse(1);
         LocalDate chapterDate=chapter!=null?chapter.getChapterDate():LocalDate.now(ZoneId.of("Asia/Seoul"));
-        if(chapter!=null){chapter.getQuestions().stream().filter(item->item.getQuestion().getId().equals(questionId)).findFirst().ifPresent(item->item.complete(questionId));chapters.save(chapter);}
         if(questionReviews.findByStudentIdAndQuestionIdAndChapterNumber(studentId,questionId,chapterNumber).isEmpty())
             questionReviews.save(new QuestionReviewItem(student,q,chapterDate,chapterNumber));
     }
@@ -235,19 +309,34 @@ public class LearningService implements ApplicationRunner {
         students.requireOwned(item.getStudent().getId(),email);
         if(item.isSolved())return new AttemptResult(true,"이미 복습을 마쳤어요.",item.getQuestion().getAnswer());
         boolean correct=item.submitReview(answer);
+        attempts.save(new QuestionAttempt(item.getStudent(),item.getQuestion(),answer.trim(),correct));
+        if(correct){
+            chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(item.getStudent().getId()).stream()
+                .filter(chapter->chapter.getChapterNumber()==item.getChapterNumber()).findFirst().ifPresent(chapter->{
+                    chapter.getQuestions().stream().filter(question->question.getQuestion().getId().equals(item.getQuestion().getId()))
+                        .findFirst().ifPresent(LearningChapterQuestion::completeAfterReview);
+                    chapters.save(chapter);
+                });
+        }
         LearningQuestion question=item.getQuestion();
         String message=correct?("LISTEN_AND_TYPE".equals(question.getQuestionType())?"정답이에요!":"정답이에요! "+question.getExplanation()):"틀렸어요.";
         return new AttemptResult(correct,message,correct?question.getAnswer():null);
     }
     @Transactional(readOnly=true) public DailyDto daily(UUID studentId,String email){
         students.requireOwned(studentId,email); Instant today=LocalDate.now(ZoneId.of("Asia/Seoul")).atStartOfDay(ZoneId.of("Asia/Seoul")).toInstant();
-        List<QuestionAttempt> a=attempts.findAllByStudentIdAndCreatedAtAfter(studentId,today); List<kr.co.hanguldetective.writing.WritingEntry> w=writings.findAllByStudentIdAndCreatedAtAfter(studentId,today);
+        List<QuestionAttempt> a=attempts.findAllByStudentIdAndCreatedAtAfter(studentId,today); List<kr.co.hanguldetective.writing.WritingEntry> w=writings.findDailyByStudentIdAndCreatedAtAfter(studentId,today);
         LocalDate todayDate=LocalDate.now(ZoneId.of("Asia/Seoul"));
-        boolean questionDone=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId).stream().anyMatch(chapter->todayDate.equals(chapter.getCompletionDate()))||a.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count()>=10; boolean writeDone=!w.isEmpty(); boolean reviewDone=writeDone&&w.stream().allMatch(entry->entry.getErrors().stream().allMatch(WritingError::isSolved));
+        List<LearningChapter> studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
+        List<QuestionReviewItem> reviews=questionReviews.findAllByStudentIdOrderByChapterDateDescChapterNumberDescCreatedAtAsc(studentId);
+        List<QuestionAttempt> allAttempts=attempts.findAllByStudentId(studentId);
+        boolean questionDone=studentChapters.stream().anyMatch(chapter->chapterMastered(chapter,reviews,allAttempts)&&todayDate.equals(chapter.getCompletionDate()))
+            ||studentChapters.isEmpty()&&a.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count()>=10;
+        boolean writeDone=!w.isEmpty(); boolean reviewDone=writeDone&&w.stream().allMatch(entry->entry.getErrors().stream().allMatch(WritingError::isSolved));
         return new DailyDto(questionDone,writeDone,reviewDone,(questionDone?1:0)+(writeDone?1:0)+(reviewDone?1:0));
     }
-    private QuestionDto toDto(LearningQuestion q,boolean correct){try{return new QuestionDto(q.getId(),q.getCategory(),q.getQuestionType(),q.getPrompt(),q.getAudioText(),mapper.readValue(q.getChoicesJson(),new TypeReference<List<String>>(){}),null,null,correct);}catch(Exception e){return new QuestionDto(q.getId(),q.getCategory(),q.getQuestionType(),q.getPrompt(),q.getAudioText(),List.of(),null,null,correct);}}
-    public record QuestionDto(UUID id,String category,String questionType,String prompt,String audioText,List<String> choices,String answer,String explanation,boolean correct){}
+    private QuestionDto toDto(LearningQuestion q,boolean correct,boolean attempted){try{return new QuestionDto(q.getId(),q.getCategory(),q.getQuestionType(),q.getPrompt(),q.getAudioText(),mapper.readValue(q.getChoicesJson(),new TypeReference<List<String>>(){}),null,null,correct,attempted);}catch(Exception e){return new QuestionDto(q.getId(),q.getCategory(),q.getQuestionType(),q.getPrompt(),q.getAudioText(),List.of(),null,null,correct,attempted);}}
+    public record QuestionDto(UUID id,String category,String questionType,String prompt,String audioText,List<String> choices,String answer,String explanation,boolean correct,boolean attempted){}
+    public record LearningProgressDto(int chapterNumber,int remaining,int total){}
     public record AttemptResult(boolean correct,String message,String answer){}
     public record QuestionReviewDto(UUID id,String category,String questionType,String prompt,String audioText,List<String> choices,int reviewAttempts,boolean solved){}
     public record QuestionReviewChapterDto(LocalDate chapterDate,int chapterNumber,List<QuestionReviewDto> questions){}
@@ -256,14 +345,19 @@ public class LearningService implements ApplicationRunner {
         students.requireOwned(studentId,email);
         ZoneId zone=ZoneId.of("Asia/Seoul");
         var allAttempts=attempts.findAllByStudentId(studentId);
-        var allWritings=writings.findAllByStudentIdOrderByCreatedAtDesc(studentId);
+        var allWritings=writings.findHistoryByStudentIdOrderByCreatedAtDesc(studentId);
         Map<LocalDate,List<LearningChapter>> chapterByDate=new HashMap<>();
-        var studentChapters=chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
+        var studentChapters=chapters.findHistoryByStudentIdOrderByChapterNumberDescCreatedAtDesc(studentId);
+        var reviews=questionReviews.findAllByStudentIdOrderByChapterDateDescChapterNumberDescCreatedAtAsc(studentId);
+        Map<LocalDate,List<QuestionAttempt>> attemptsByDate=new HashMap<>();
+        allAttempts.forEach(attempt->attemptsByDate.computeIfAbsent(attempt.getCreatedAt().atZone(zone).toLocalDate(),ignored->new ArrayList<>()).add(attempt));
+        Map<LocalDate,List<kr.co.hanguldetective.writing.WritingEntry>> writingsByDate=new HashMap<>();
+        allWritings.forEach(writing->writingsByDate.computeIfAbsent(writing.getCreatedAt().atZone(zone).toLocalDate(),ignored->new ArrayList<>()).add(writing));
         Map<LocalDate,Integer> completedQuestionsByDate=new HashMap<>();
         for(var chapter:studentChapters){
             LocalDate completionDate=chapter.getCompletionDate();
-            if(completionDate!=null) chapterByDate.computeIfAbsent(completionDate,ignored->new ArrayList<>()).add(chapter);
-            for(var item:chapter.getQuestions()) if(item.isCompleted()) {
+            if(completionDate!=null&&chapterMastered(chapter,reviews,allAttempts)) chapterByDate.computeIfAbsent(completionDate,ignored->new ArrayList<>()).add(chapter);
+            for(var item:chapter.getQuestions()) if(questionMastered(chapter,item,reviews,allAttempts)) {
                 LocalDate date=item.getCompletedAt()==null?chapter.getChapterDate():item.getCompletedAt().atZone(zone).toLocalDate();
                 completedQuestionsByDate.merge(date,1,Integer::sum);
             }
@@ -273,12 +367,14 @@ public class LearningService implements ApplicationRunner {
         allAttempts.forEach(a->dates.add(a.getCreatedAt().atZone(zone).toLocalDate()));
         allWritings.forEach(w->dates.add(w.getCreatedAt().atZone(zone).toLocalDate()));
         dates.addAll(chapterByDate.keySet()); dates.addAll(completedQuestionsByDate.keySet());
+        LocalDate firstChapterDate=studentChapters.stream().map(LearningChapter::getCreatedAt).map(time->time.atZone(zone).toLocalDate()).min(LocalDate::compareTo).orElse(null);
         return dates.stream().map(date->{
-            var dayAttempts=allAttempts.stream().filter(a->a.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
-            var dayWritings=allWritings.stream().filter(w->w.getCreatedAt().atZone(zone).toLocalDate().equals(date)).toList();
+            var dayAttempts=attemptsByDate.getOrDefault(date,List.of());
+            var dayWritings=writingsByDate.getOrDefault(date,List.of());
             List<LearningChapter> dayChapters=chapterByDate.getOrDefault(date,List.of());
-            int solved=studentChapters.isEmpty()?(int)dayAttempts.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count():completedQuestionsByDate.getOrDefault(date,0);
-            int chaptersCompleted=studentChapters.isEmpty()?(solved>=10?1:0):dayChapters.size();
+            boolean legacyDay=firstChapterDate==null||date.isBefore(firstChapterDate);
+            int solved=legacyDay?(int)dayAttempts.stream().filter(QuestionAttempt::isCorrect).map(QuestionAttempt::getQuestionId).distinct().count():completedQuestionsByDate.getOrDefault(date,0);
+            int chaptersCompleted=legacyDay?(solved>=10?1:0):dayChapters.size();
             int remaining=(int)dayWritings.stream().flatMap(w->w.getErrors().stream()).filter(e->!e.isSolved()).count();
             int completed=(chaptersCompleted>0?1:0)+(dayWritings.isEmpty()?0:1)+(dayWritings.isEmpty()||remaining>0?0:1);
             return new DayRecord(date,solved,dayAttempts.size(),dayWritings.size(),remaining,completed,chaptersCompleted,dayWritings.stream().map(w->new Note(w.getId(),w.getText(),(int)w.getErrors().stream().filter(e->!e.isSolved()).count())).toList());

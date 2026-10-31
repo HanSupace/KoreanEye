@@ -1076,7 +1076,7 @@ main {
   border-top: 3px solid #a3dfcb;
 }
 .question-card:before {
-  content: "한글탐정대 · 단서 조사서";
+  content: "한글탐정단 · 단서 조사서";
   display: block;
   font-size: 10px;
   color: #7c9c95;
@@ -4432,8 +4432,21 @@ main {
   color: #a1948a;
 }
 .duo-step-label.is-current {
-  font-weight: 750;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-weight: 400;
   color: #80543c;
+  font-size: 13px;
+}
+.duo-step-start {
+  font-weight: 400;
+}
+.duo-step-remaining {
+  color: #80543c;
+  font-size: 12px;
+  font-weight: 400;
 }
 @media (max-width: 760px) {
   .learning-path-page {
@@ -4730,6 +4743,7 @@ main {
 }
 .handwriting-pad-wrap {
   width: 100%;
+  min-width: 0;
   margin: 10px 0 14px;
 }
 .handwriting-help {
@@ -4740,6 +4754,8 @@ main {
 .handwriting-canvas {
   display: block;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   height: 250px;
   border: 1px solid #e5d7c9;
   border-radius: 12px;
@@ -4747,12 +4763,58 @@ main {
   touch-action: none;
   cursor: crosshair;
 }
+.writing-paper .handwriting-surface {
+  height: 400px;
+  min-height: 280px;
+  max-height: max(320px, min(720px, 85svh));
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid #e5d7c9;
+  border-radius: 12px;
+  background: #fff;
+}
+.writing-paper .handwriting-surface .handwriting-canvas {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+.handwriting-resize-hint {
+  display: none;
+}
+.writing-paper .handwriting-resize-hint {
+  display: block;
+  margin: 6px 0 0;
+  color: #8a7c72;
+  font-size: 12px;
+}
+.writing-paper .handwriting-actions {
+  flex-wrap: wrap;
+}
 .handwriting-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-top: 10px;
+}
+.handwriting-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.handwriting-tools .example-btn {
+  padding: 8px 12px;
+  border: 1px solid #e5d7c9;
+  border-radius: 10px;
+  background: #fffaf3;
+}
+.handwriting-tools .example-btn[aria-pressed="true"] {
+  color: #fffaf3;
+  border-color: #725337;
+  background: #725337;
+}
+.handwriting-canvas.is-erasing {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Ccircle cx='14' cy='14' r='12' fill='%23fffaf3' fill-opacity='.45' stroke='%23725337'/%3E%3C/svg%3E") 14 14, crosshair;
 }
 .recognized-text {
   padding: 10px 12px;
@@ -4796,6 +4858,11 @@ main {
 @media (max-width: 760px) {
   .handwriting-canvas {
     height: 210px;
+  }
+  .writing-paper .handwriting-surface {
+    height: calc(clamp(320px, 60svh, 480px) - 100px);
+    min-height: 240px;
+    max-height: max(280px, min(600px, 85svh));
   }
   .input-mode-picker button {
     padding: 7px 10px;
@@ -4880,4 +4947,79 @@ main {
   .ranking-highlight { grid-template-columns: 1fr; }
   .podium-place { font-size: 13px; }
   .learning-record-loading { min-height: calc(100vh - 110px); padding: 12px; }
+}
+
+.activity-modal { border: 1px solid #e7dcd2; border-radius: 24px; background: #fffaf3; color: #604632; padding: 32px; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; box-shadow: 0 20px 70px #34251d33; animation: modal-enter .2s ease-out; }
+.activity-modal::backdrop { background: #35281c88; }
+.activity-modal-content { text-align: center; }
+.activity-modal h2 { font-size: 22px; margin: 0 0 20px; }
+.activity-modal p { line-height: 1.7; overflow-wrap: anywhere; }
+.activity-modal .row-actions { justify-content: center; flex-wrap: wrap; }
+.activity-modal-symbol { display: block; font-size: 42px; color: #725337; }
+.activity-modal.is-error .activity-modal-symbol { color: #a44235; }
+.writing-input-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 18px 0; }
+@keyframes modal-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@supports (transition-behavior: allow-discrete) {
+  .activity-modal { transition: opacity .16s, display .16s allow-discrete, overlay .16s allow-discrete; }
+  .activity-modal:not([open]) { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .activity-modal { animation: none; transition: none; } }
+@media (max-width: 480px) { .writing-input-heading { align-items: flex-start; flex-direction: column; gap: 12px; } .activity-modal { padding: 24px 18px; } }
+
+.weekly-report { display: grid; gap: 22px; }
+.learning-path-page .weekly-report-shortcut-heading { flex-wrap: wrap; gap: 12px; }
+.weekly-report .section-head { margin-bottom: 0; }
+.weekly-report-period { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.weekly-report-period strong { text-align: center; line-height: 1.7; }
+.weekly-report-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.weekly-report h2 { font-size: 19px; margin: 0 0 16px; }
+.weekly-report p { line-height: 1.8; }
+.weekly-report small { color: #8a7c72; line-height: 1.7; }
+.weekly-report-value { display: block; font-size: 36px; color: #725337; }
+.weekly-report-unavailable { display: block; font-size: 22px; color: #8a7c72; }
+.weekly-report-card-title { display: flex; align-items: center; gap: 8px; }
+.weekly-report-icon { flex: 0 0 20px; color: var(--ink); }
+.weekly-report-comparison { background: var(--paper); border-color: var(--line); }
+.weekly-report-cards .weekly-report-value,
+.weekly-report-cards .weekly-report-unavailable { min-height: 54px; display: flex; align-items: center; }
+.weekly-report-plot { display: flex; gap: 12px; margin: 24px 0; }
+.weekly-report-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 30px 0; color: #8a7c72; font-size: 12px; }
+.weekly-report-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px; flex: 1; min-width: 0; }
+.weekly-report-column { display: flex; flex-direction: column; align-items: center; gap: 10px; font-size: 13px; }
+.weekly-report-track { width: 100%; max-width: 60px; height: 180px; background: #f4ece3; border-radius: 10px; display: flex; align-items: flex-end; overflow: hidden; }
+.weekly-report-bar { width: 100%; background: #b58b68; border-radius: 10px 10px 0 0; }
+.weekly-report-column.is-peak .weekly-report-bar { background: #725337; }
+.weekly-report-column.is-peak b,
+.weekly-report-peak-note { color: #725337; }
+.weekly-report .weekly-report-peak-note { font-size: 12px; overflow-wrap: anywhere; }
+.weekly-report-weaknesses ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-width: 560px; }
+.weekly-report-weaknesses li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; border-radius: 12px; background: #f8f4ef; color: var(--ink); }
+.weekly-report-weaknesses li strong { color: #725337; white-space: nowrap; }
+.weekly-report-parent-insight { max-width: 720px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.weekly-report-parent-insight h3 { margin: 0 0 6px; font-size: 15px; color: var(--ink); }
+.weekly-report-parent-insight p { margin: 0 0 16px; }
+.weekly-report-ai-note { display: block; margin-top: 8px; }
+.weekly-report-feedback { background: var(--paper); border-color: var(--line); }
+.weekly-report-feedback h3 { margin: 0 0 8px; font-size: 17px; color: var(--ink); line-height: 1.6; }
+.weekly-report-goal { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.weekly-report-goal-comparison { display: flex; gap: 6px; max-width: 280px; margin-top: 16px; }
+.weekly-report-goal-day { flex: 1; height: 10px; border-radius: 5px; background: #f4ece3; }
+.weekly-report-goal-day.is-learned { background: #725337; }
+.weekly-report-guidance { color: var(--muted); font-size: 12px; }
+.weekly-report-guidance summary { cursor: pointer; }
+.weekly-report-guidance p { margin: 8px 0 0; font-size: 12px; line-height: 1.7; }
+.weekly-report-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.weekly-report-actions .btn { min-width: 176px; }
+.weekly-report-actions .btn.secondary { color: var(--ink); border-color: var(--line); background: var(--paper); }
+.weekly-report-actions .btn.secondary:hover { background: var(--bg); }
+.weekly-report-continue-button { color: var(--paper); background: var(--blue); border-color: var(--blue); }
+.weekly-report-continue-button:hover { background: var(--blue2); border-color: var(--blue2); }
+@media (max-width: 760px) {
+  .weekly-report-cards { grid-template-columns: 1fr; }
+  .weekly-report-period strong { width: 100%; order: -1; }
+  .weekly-report-bars { gap: 6px; }
+  .weekly-report-column { font-size: 12px; }
+  .weekly-report-track { height: 140px; }
+  .weekly-report-actions { flex-direction: column; align-items: stretch; }
+  .weekly-report-actions .btn { width: 100%; min-width: 0; overflow-wrap: anywhere; }
 }

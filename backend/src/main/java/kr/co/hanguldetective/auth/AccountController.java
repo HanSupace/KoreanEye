@@ -41,6 +41,7 @@ public class AccountController {
             "delete from QuestionReviewItem r where r.student.id in (" + students + ")",
             "delete from LearningChapterQuestion q where q.chapter.id in (select c.id from LearningChapter c where c.student.id in (" + students + "))",
             "delete from LearningChapter c where c.student.id in (" + students + ")",
+            "delete from LearningQuestion q where q.ownerStudent.id in (" + students + ")",
             "delete from StudentProfile s where s.parent.id = :accountId"
         };
         for (String deletion : deletions) {

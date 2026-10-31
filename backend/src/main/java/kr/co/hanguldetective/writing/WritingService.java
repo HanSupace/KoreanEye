@@ -3,6 +3,7 @@ package kr.co.hanguldetective.writing;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import kr.co.hanguldetective.learning.QuestionAttemptRepository;
+import kr.co.hanguldetective.learning.WritingPracticeQuestionService;
 import kr.co.hanguldetective.student.StudentProfile;
 import kr.co.hanguldetective.student.StudentService;
 import java.time.*;
@@ -11,6 +12,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -20,22 +22,47 @@ public class WritingService {
     private static final Logger log = LoggerFactory.getLogger(WritingService.class);
     private final StudentService students; private final WritingEntryRepository writings; private final WritingErrorRepository errors;
     private final SpellCheckService spellCheck; private final ObjectMapper mapper; private final QuestionAttemptRepository attempts;
-    public WritingService(StudentService students,WritingEntryRepository writings,WritingErrorRepository errors,SpellCheckService spellCheck,ObjectMapper mapper,QuestionAttemptRepository attempts){this.students=students;this.writings=writings;this.errors=errors;this.spellCheck=spellCheck;this.mapper=mapper;this.attempts=attempts;}
+    private final WritingPracticeQuestionService practiceQuestions;
+    @Autowired
+    public WritingService(StudentService students,WritingEntryRepository writings,WritingErrorRepository errors,SpellCheckService spellCheck,ObjectMapper mapper,QuestionAttemptRepository attempts,WritingPracticeQuestionService practiceQuestions){this.students=students;this.writings=writings;this.errors=errors;this.spellCheck=spellCheck;this.mapper=mapper;this.attempts=attempts;this.practiceQuestions=practiceQuestions;}
+    public WritingService(StudentService students,WritingEntryRepository writings,WritingErrorRepository errors,SpellCheckService spellCheck,ObjectMapper mapper,QuestionAttemptRepository attempts){this(students,writings,errors,spellCheck,mapper,attempts,null);}
     @Transactional public WritingDto create(UUID studentId,String email,String text){
         if(text==null||text.isBlank())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"한 문장만 적어도 좋아요.");
         if(text.length()>5000)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"글은 5,000자까지 쓸 수 있어요.");
         StudentProfile student=students.requireOwned(studentId,email);
+        ProfanityFilter.validate(text);
         WritingEntry writing=new WritingEntry(student,text);
         SpellCheckService.AnalysisResult analysis=spellCheck.analyze(text);
         int acceptedCandidates=0;
         int droppedCandidates=0;
-        for(SpellCheckService.DetectedError e:analysis.errors().stream().sorted(Comparator.comparingInt(SpellCheckService.DetectedError::startIndex)).toList()){
-            if(e.startIndex()<0||e.endIndex()>text.length()||e.startIndex()>=e.endIndex()){
+        Set<String> acceptedKeys=new HashSet<>();
+        for(SpellCheckService.DetectedError e:analysis.errors().stream().filter(Objects::nonNull).sorted(Comparator.comparingInt(SpellCheckService.DetectedError::startIndex)).toList()){
+            if(!WritingCandidateValidator.hasCorrection(e.original(),e.correct())){
+                droppedCandidates++;
+                log.info("Writing analysis candidate ignored: provider={}, reason=NO_CORRECTION, startIndex={}, endIndex={}",analysis.provider(),e.startIndex(),e.endIndex());
+                continue;
+            }
+            if("PUNCTUATION".equals(e.category())){
+                droppedCandidates++;
+                log.info("Writing analysis candidate ignored: provider={}, reason=PUNCTUATION, startIndex={}, endIndex={}",analysis.provider(),e.startIndex(),e.endIndex());
+                continue;
+            }
+            int startIndex=e.startIndex();
+            int endIndex=e.endIndex();
+            if(startIndex<0||endIndex>text.length()||startIndex>=endIndex||!text.substring(startIndex,endIndex).equals(e.original())){
+                int correctedStart=findUniqueOccurrence(text,e.original());
+                if(correctedStart>=0){
+                    startIndex=correctedStart;
+                    endIndex=correctedStart+e.original().length();
+                    log.info("Writing analysis candidate range corrected: provider={}, category={}, startIndex={}, endIndex={}",analysis.provider(),e.category(),startIndex,endIndex);
+                }
+            }
+            if(startIndex<0||endIndex>text.length()||startIndex>=endIndex){
                 droppedCandidates++;
                 log.warn("Writing analysis candidate dropped: provider={}, reason=INVALID_RANGE, category={}, startIndex={}, endIndex={}, sourceLength={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex(),text.length());
                 continue;
             }
-            if(!text.substring(e.startIndex(),e.endIndex()).equals(e.original())){
+            if(!text.substring(startIndex,endIndex).equals(e.original())){
                 droppedCandidates++;
                 log.warn("Writing analysis candidate dropped: provider={}, reason=SOURCE_MISMATCH, category={}, startIndex={}, endIndex={}, sourceLength={}, candidateLength={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex(),text.length(),e.original().length());
                 continue;
@@ -45,8 +72,14 @@ public class WritingService {
                 log.warn("Writing analysis candidate dropped: provider={}, reason=EMPTY_CORRECTION, category={}, startIndex={}, endIndex={}",analysis.provider(),e.category(),e.startIndex(),e.endIndex());
                 continue;
             }
+            String category=WritingCandidateValidator.spacingOnly(e.original(),e.correct())?"SPACING":e.category();
+            if("SPACING".equals(category)&&!WritingCandidateValidator.spacingOnly(e.original(),e.correct())){
+                droppedCandidates++;
+                continue;
+            }
+            if(!acceptedKeys.add(startIndex+":"+endIndex+":"+e.correct())){droppedCandidates++;continue;}
             try{
-                writing.addError(new WritingError(e.startIndex(),e.endIndex(),e.original(),e.correct(),e.category(),e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));
+                writing.addError(new WritingError(startIndex,endIndex,e.original(),e.correct(),category,e.explanation(),e.hintLevel1(),e.hintLevel2(),mapper.writeValueAsString(e.choices())));
                 acceptedCandidates++;
             }catch(Exception ex){
                 droppedCandidates++;
@@ -54,10 +87,17 @@ public class WritingService {
             }
         }
         log.info("Writing analysis completed: provider={}, candidates={}, accepted={}, dropped={}",analysis.provider(),analysis.errors().size(),acceptedCandidates,droppedCandidates);
-        return toDto(writings.save(writing),analysis.provider());
+        WritingEntry saved=writings.save(writing);
+        if(practiceQuestions!=null)practiceQuestions.generateFor(saved);
+        return toDto(saved,analysis.provider());
     }
-    @Transactional(readOnly=true) public WritingDto get(UUID writingId,String email){WritingEntry w=writings.findById(writingId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));owned(w,email);return toDto(w,"stored");}
-    @Transactional(readOnly=true) public List<WritingDto> list(UUID studentId,String email){students.requireOwned(studentId,email);return writings.findAllByStudentIdOrderByCreatedAtDesc(studentId).stream().map(w->toDto(w,"stored")).toList();}
+    private int findUniqueOccurrence(String text,String original){
+        if(original==null||original.isBlank())return -1;
+        int index=text.indexOf(original);
+        return index>=0&&text.indexOf(original,index+1)<0?index:-1;
+    }
+    @Transactional public WritingDto get(UUID writingId,String email){WritingEntry w=writings.findById(writingId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));owned(w,email);if(practiceQuestions!=null)practiceQuestions.generateFor(w);return toDto(w,"stored");}
+    @Transactional public List<WritingDto> list(UUID studentId,String email){students.requireOwned(studentId,email);List<WritingEntry> entries=writings.findAllByStudentIdOrderByCreatedAtDesc(studentId);if(practiceQuestions!=null)entries.forEach(practiceQuestions::generateFor);return entries.stream().map(w->toDto(w,"stored")).toList();}
     @Transactional public AttemptResult attempt(UUID errorId,String email,String answer){WritingError e=errors.findById(errorId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));owned(e.getWriting(),email);boolean correct=e.submit(answer);return new AttemptResult(correct,correct?"잘 고쳤어요! 직접 단서를 찾았네요.":"거의 맞았어요. 힌트를 보고 다시 해봐요.",e.getAttemptCount(),correct?e.getCorrect():null);}
     @Transactional public HintResult hint(UUID errorId,String email){WritingError e=errors.findById(errorId).orElseThrow(()->new ResponseStatusException(HttpStatus.NOT_FOUND));owned(e.getWriting(),email);int level=e.nextHint();String hint=switch(level){case 1->e.getHintLevel1();case 2->e.getHintLevel2();default->"보기: "+String.join(" · ",choices(e));};return new HintResult(level,hint);}
     @Transactional(readOnly=true) public List<WeaknessDto> weaknesses(UUID studentId,String email){students.requireOwned(studentId,email);List<WritingError> list=errors.findAllByWritingStudentId(studentId);Map<String,List<WritingError>> by=list.stream().collect(Collectors.groupingBy(WritingError::getCategory));List<WeaknessDto> result=new ArrayList<>();for(var entry:by.entrySet()){long solved=entry.getValue().stream().filter(WritingError::isSolved).count();int total=entry.getValue().size();int score=Math.min(100,(int)((total-solved)*12+entry.getValue().stream().mapToInt(WritingError::getHintLevelUsed).sum()*2));result.add(new WeaknessDto(entry.getKey(),total,Math.round(solved*100.0/Math.max(1,total)),score));}return result.stream().sorted(Comparator.comparingInt(WeaknessDto::weaknessScore).reversed()).toList();}

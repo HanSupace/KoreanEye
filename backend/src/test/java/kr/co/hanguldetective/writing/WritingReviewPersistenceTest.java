@@ -19,6 +19,31 @@ class WritingReviewPersistenceTest {
     @Autowired WritingErrorRepository errors;
     @Autowired QuestionAttemptRepository attempts;
 
+    @Test void invalidAiReviewIsNotPersistedAndCorrectAnswerSurvivesReload() {
+        var student=em.persist(new StudentProfile(em.persist(new ParentAccount("validation-owner","unused")),"학생",1,null));
+        var students=mock(StudentService.class);
+        when(students.requireOwned(student.getId(),"validation-owner")).thenReturn(student);
+        SpellCheckService checker=text->new SpellCheckService.AnalysisResult(java.util.List.of(
+            new SpellCheckService.DetectedError("빨리","빨리",0,2,"OTHER","설명","힌트1","힌트2",java.util.List.of()),
+            new SpellCheckService.DetectedError("끝낫으면","끝났으면",3,7,"FINAL_CONSONANT","설명","힌트1","힌트2",java.util.List.of())
+        ),"gemini");
+        var service=new WritingService(students,writings,errors,checker,new ObjectMapper(),attempts);
+        var created=service.create(student.getId(),"validation-owner","빨리 끝낫으면 좋겠다.");
+        assertEquals(1,created.errors().size());
+        var id=created.errors().getFirst().id();
+        service.hint(id,"validation-owner");
+        assertFalse(service.attempt(id,"validation-owner","끝낫으면").correct());
+        assertTrue(service.attempt(id,"validation-owner","끝났으면").correct());
+        em.flush(); em.clear();
+        var stored=service.get(created.id(),"validation-owner").errors().getFirst();
+        assertTrue(stored.solved());
+        assertEquals(2,stored.attemptCount());
+        assertEquals(1,stored.hintLevelUsed());
+        assertTrue(service.attempt(id,"validation-owner","끝났으면").correct());
+        assertEquals(2,errors.findById(id).orElseThrow().getAttemptCount());
+        assertEquals(1,errors.count());
+    }
+
     @Test void rulesErrorsAndCompletionSurviveReloadWithOriginalIdsAndOwner() {
         var student=em.persist(new StudentProfile(em.persist(new ParentAccount("owner","unused")),"학생",1,null));
         var students=mock(StudentService.class);

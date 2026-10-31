@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, Writing } from "@/lib/api";
 
 export default function WritingReviewList({ token, studentId, categoryNames, onWrite }: {
@@ -12,6 +12,7 @@ export default function WritingReviewList({ token, studentId, categoryNames, onW
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
+  const saveRequest = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -25,7 +26,8 @@ export default function WritingReviewList({ token, studentId, categoryNames, onW
   }, [token, studentId, retry]);
 
   const complete = async (id: string) => {
-    if (saving) return;
+    if (saveRequest.current) return;
+    saveRequest.current = true;
     setSaving(id);
     setSaveError("");
     try {
@@ -33,7 +35,7 @@ export default function WritingReviewList({ token, studentId, categoryNames, onW
       setWritings(items => items.map(writing => ({ ...writing, errors: writing.errors.map(error => error.id === id ? { ...error, solved: true } : error) })));
     } catch {
       setSaveError("복습 완료를 저장하지 못했어요. 다시 시도해 주세요.");
-    } finally { setSaving(null); }
+    } finally { saveRequest.current = false; setSaving(null); }
   };
 
   const groupsByText: Record<string, { text: string; writings: Writing[] }> = {};

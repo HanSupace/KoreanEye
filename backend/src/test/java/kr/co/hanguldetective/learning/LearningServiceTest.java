@@ -12,10 +12,26 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class LearningServiceTest {
+    @Test void startingNewChapterPreservesLegacyCompletedHistory(){
+        var yesterday=LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(1);
+        var time=yesterday.atTime(12,0).atZone(ZoneId.of("Asia/Seoul")).toInstant();
+        var records=java.util.stream.IntStream.range(0,10)
+            .mapToObj(i->attempt(UUID.randomUUID(),true,time)).toList();
+        when(attempts.findAllByStudentId(student)).thenReturn(records);
+        var chapter=new LearningChapter(null,LocalDate.now(ZoneId.of("Asia/Seoul")),2);
+        var question=mock(LearningQuestion.class);
+        chapter.addQuestion(question);
+        when(chapters.findHistoryByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        var history=service.history(student,"owner");
+        assertEquals(1,history.stream().filter(day->day.date().equals(yesterday)).findFirst().orElseThrow().chaptersCompleted());
+        assertEquals(0,history.stream().filter(day->day.date().equals(chapter.getChapterDate())).findFirst().orElseThrow().chaptersCompleted());
+    }
     final QuestionAttemptRepository attempts=mock(QuestionAttemptRepository.class);
+    final LearningQuestionRepository questions=mock(LearningQuestionRepository.class);
+    final QuestionReviewRepository reviews=mock(QuestionReviewRepository.class);
     final WritingEntryRepository writings=mock(WritingEntryRepository.class);
     final LearningChapterRepository chapters=mock(LearningChapterRepository.class);
-    final LearningService service=new LearningService(mock(LearningQuestionRepository.class),attempts,mock(QuestionReviewRepository.class),chapters,mock(StudentService.class),writings,mock(WritingErrorRepository.class),new ObjectMapper());
+    final LearningService service=new LearningService(questions,attempts,reviews,chapters,mock(StudentService.class),writings,mock(WritingErrorRepository.class),new ObjectMapper());
     final UUID student=UUID.randomUUID();
 
     QuestionAttempt attempt(UUID question,boolean correct,Instant time){
@@ -42,7 +58,7 @@ class LearningServiceTest {
         var writing=mock(WritingEntry.class); var error=mock(WritingError.class);
         when(writing.getId()).thenReturn(UUID.randomUUID()); when(writing.getText()).thenReturn("나의 글");
         when(writing.getCreatedAt()).thenReturn(time); when(writing.getErrors()).thenReturn(List.of(error));
-        when(writings.findAllByStudentIdOrderByCreatedAtDesc(student)).thenReturn(List.of(writing));
+        when(writings.findHistoryByStudentIdOrderByCreatedAtDesc(student)).thenReturn(List.of(writing));
         var day=service.history(student,"owner").stream().filter(d->d.date().equals(LocalDate.of(2026,1,1))).findFirst().orElseThrow();
         assertEquals(1,day.questionsSolved()); assertEquals(1,day.remaining());
         assertEquals(1,day.completedCount()); assertEquals(writing.getId(),day.notes().get(0).id());
@@ -83,8 +99,49 @@ class LearningServiceTest {
         when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
         assertEquals(today,chapter.getCompletionDate());
         assertTrue(service.daily(student,"owner").questionsDone());
+        when(chapters.findHistoryByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
         var history=service.history(student,"owner");
         assertEquals(1,history.stream().filter(day->day.date().equals(today)).findFirst().orElseThrow().chaptersCompleted());
         assertEquals(1,history.stream().mapToInt(LearningService.DayRecord::chaptersCompleted).sum());
+    }
+
+    @Test void skippedQuestionStaysPendingUntilReviewIsSolved(){
+        var question=mock(LearningQuestion.class);
+        var questionId=UUID.randomUUID();
+        when(question.getId()).thenReturn(questionId);
+        when(question.getAnswer()).thenReturn("정답");
+        var chapter=new LearningChapter(null,LocalDate.now(ZoneId.of("Asia/Seoul")),1);
+        chapter.addQuestion(question);
+        chapter.getQuestions().get(0).complete(questionId); // 기존 건너뛰기 기록도 미완료로 취급
+        var profile=mock(kr.co.hanguldetective.student.StudentProfile.class);
+        when(profile.getId()).thenReturn(student);
+        var review=new QuestionReviewItem(profile,question,chapter.getChapterDate(),1);
+        var reviewId=UUID.randomUUID();
+        when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        when(reviews.findAllByStudentIdOrderByChapterDateDescChapterNumberDescCreatedAtAsc(student)).thenReturn(List.of(review));
+        when(reviews.findById(reviewId)).thenReturn(Optional.of(review));
+
+        assertEquals(1,service.progress(student,"owner").remaining());
+        assertFalse(service.daily(student,"owner").questionsDone());
+        assertTrue(service.attemptQuestionReview(reviewId,"owner","정답").correct());
+        assertEquals(0,chapter.getQuestions().stream().filter(item->!item.isCompleted()).count());
+        assertEquals(2,service.progress(student,"owner").chapterNumber());
+        assertTrue(service.daily(student,"owner").questionsDone());
+    }
+
+    @Test void newSkipCreatesReviewWithoutMarkingAnswerCorrect(){
+        var question=mock(LearningQuestion.class);
+        var questionId=UUID.randomUUID();
+        when(question.getId()).thenReturn(questionId);
+        when(questions.findById(questionId)).thenReturn(Optional.of(question));
+        var chapter=new LearningChapter(null,LocalDate.now(ZoneId.of("Asia/Seoul")),1);
+        chapter.addQuestion(question);
+        when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        when(reviews.findByStudentIdAndQuestionIdAndChapterNumber(student,questionId,1)).thenReturn(Optional.empty());
+
+        service.skip(questionId,student,"owner");
+
+        assertFalse(chapter.getQuestions().get(0).isCompleted());
+        verify(reviews).save(any(QuestionReviewItem.class));
     }
 }

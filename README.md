@@ -68,13 +68,18 @@ npm run dev
 
 ## AI 분석 설정
 
-기본값 `AI_MODE=rules`는 예제 규칙으로 작동합니다. Gemini 기반 글 분석은 `.env`에 다음 값을 설정합니다.
+두 제공자 키를 `.env`에 저장한 뒤 `AI_MODE` 한 줄로 사용할 AI를 선택할 수 있습니다. Gemini를 선택하려면:
 
 ```dotenv
 AI_MODE=gemini
 GOOGLE_GEMINI_API_KEY=your-server-side-key
 GOOGLE_GEMINI_MODEL=gemini-3.1-flash-lite
+GOOGLE_GEMINI_FALLBACK_MODEL=gemini-3.6-flash
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL=gpt-6-astra
 ```
+
+OpenAI로 바꿀 때는 키를 그대로 두고 `AI_MODE=openai`로 변경한 뒤 백엔드를 재시작하면 됩니다. 다시 Gemini를 쓰려면 `AI_MODE=gemini`로 되돌립니다. `AI_MODE=rules`는 외부 AI를 사용하지 않습니다.
 
 Gemini 키는 Google AI Studio에서 만들며, 손글씨 인식용 `GOOGLE_CLOUD_VISION_API_KEY`와 별개입니다. 키는 Spring Boot 서버에서만 사용합니다. 분석 결과는 서버가 원문 범위와 표현 일치를 확인한 뒤 저장합니다. AI 요청 실패 시 사용자에게 오류를 표시하며 규칙 기반 분석으로 조용히 전환하지 않습니다. 자유 글은 외부 AI로 전송될 수 있으므로 어린이 개인정보 안내와 보호자 동의 흐름을 준비해야 합니다.
 

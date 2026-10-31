@@ -11,6 +11,63 @@ import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.any;
 
 class WritingServiceTest {
+    private WritingService creationService(SpellCheckService checker) {
+        var repository=mock(WritingEntryRepository.class);
+        when(repository.save(any(WritingEntry.class))).thenAnswer(call->call.getArgument(0));
+        return new WritingService(mock(StudentService.class),repository,mock(WritingErrorRepository.class),checker,new ObjectMapper(),mock(QuestionAttemptRepository.class));
+    }
+
+    private SpellCheckService.DetectedError candidate(String original,String correct,int start,int end,String category) {
+        return new SpellCheckService.DetectedError(original,correct,start,end,category,"설명","힌트1","힌트2",List.of());
+    }
+
+    @Test void identicalAiCorrectionDoesNotCreateReview() {
+        String text="시험이 빨리 끝났으면 좋겠다";
+        SpellCheckService checker=ignored->new SpellCheckService.AnalysisResult(List.of(candidate("빨리","빨리",4,6,"OTHER")),"gemini");
+        assertTrue(creationService(checker).create(UUID.randomUUID(),"owner",text).errors().isEmpty());
+        assertThrows(IllegalArgumentException.class,()->new WritingError(4,6,"빨리","빨리","OTHER","설명","힌트1","힌트2","[]"));
+    }
+
+    @Test void rejectsInvalidAiCandidatesButKeepsAndClassifiesRealSpacing() {
+        String text="집에와서 빨리 빨리";
+        var valid=candidate("집에와서","집에 와서",0,4,"OTHER");
+        var invalid=List.of(
+            candidate("없는말","교정",5,7,"OTHER"),
+            candidate("빨리","어서",-1,1,"OTHER"), // ambiguous location cannot be repaired safely
+            candidate("빨리","",5,7,"OTHER"),
+            candidate("빨리"," 빨리 ",5,7,"OTHER"),
+            candidate("빨리","빨리.",5,7,"OTHER"),
+            candidate("빨리","어서",5,7,"SPACING"), // word replacement is not a spacing correction
+            valid,valid);
+        SpellCheckService checker=ignored->new SpellCheckService.AnalysisResult(invalid,"gemini");
+        var result=creationService(checker).create(UUID.randomUUID(),"owner",text);
+        assertEquals(1,result.errors().size());
+        assertEquals("SPACING",result.errors().getFirst().category());
+        assertEquals("집에 와서",result.errors().getFirst().correct());
+    }
+
+    @Test void repairsOnlyUnambiguousAiSourceLocation() {
+        SpellCheckService checker=ignored->new SpellCheckService.AnalysisResult(List.of(candidate("가치","같이",99,101,"PRONUNCIATION_SPELLING")),"gemini");
+        var result=creationService(checker).create(UUID.randomUUID(),"owner","친구랑 가치 놀았다.");
+        assertEquals(4,result.errors().getFirst().startIndex());
+    }
+
+    @Test void canonicalHangulRepresentationIsNotAReviewQuestion() {
+        assertFalse(WritingCandidateValidator.hasCorrection("빨리",java.text.Normalizer.normalize("빨리",java.text.Normalizer.Form.NFD)));
+        assertTrue(WritingCandidateValidator.hasCorrection("집에와서","집에 와서"));
+    }
+
+    @Test void reviewAttemptsPreserveHintsAndCannotUndoOrRepeatCompletedReview() {
+        var error=reviewError("owner");
+        error.nextHint();
+        assertFalse(error.submit("되요"));
+        assertEquals(1,error.getAttemptCount());
+        assertTrue(error.submit("돼요"));
+        assertEquals(2,error.getAttemptCount());
+        assertTrue(error.submit("되요"));
+        assertEquals(2,error.getAttemptCount());
+        assertEquals(1,error.getHintLevelUsed());
+    }
     @Test void completesOwnedReviewWithoutChangingAttemptsAndIsIdempotent() {
         var errors=mock(WritingErrorRepository.class);
         var error=reviewError("owner");
