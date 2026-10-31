@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.HttpServerErrorException;
 
 @Service
 public class GeminiSpellCheckService {
@@ -18,16 +19,19 @@ public class GeminiSpellCheckService {
     private final ObjectMapper mapper;
     private final String apiKey;
     private final String model;
+    private final String fallbackModel;
 
     public GeminiSpellCheckService(
             RestClient.Builder builder,
             ObjectMapper mapper,
             @Value("${app.ai.gemini-api-key:}") String apiKey,
-            @Value("${app.ai.gemini-model}") String model) {
+            @Value("${app.ai.gemini-model}") String model,
+            @Value("${app.ai.gemini-fallback-model:gemini-3.6-flash}") String fallbackModel) {
         this.client = builder.baseUrl("https://generativelanguage.googleapis.com/v1beta").build();
         this.mapper = mapper;
         this.apiKey = apiKey;
         this.model = model;
+        this.fallbackModel = fallbackModel;
     }
 
     public SpellCheckService.AnalysisResult analyze(String text) {
@@ -58,18 +62,14 @@ public class GeminiSpellCheckService {
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
                         "responseSchema", schema,
-                        "maxOutputTokens", 1800));
+                        "thinkingConfig", Map.of("thinkingLevel","low"),
+                        "maxOutputTokens", 4096));
 
-        JsonNode response = client.post()
-                .uri("/models/{model}:generateContent", model)
-                .header("x-goog-api-key", apiKey)
-                .body(body)
-                .retrieve()
-                .body(JsonNode.class);
+        JsonNode response = generateContent(body);
         if (response == null) throw new IllegalStateException("Gemini 응답이 비어 있습니다.");
 
-        String output = response.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText();
-        if (output.isBlank()) throw new IllegalStateException("Gemini 응답에 분석 결과가 없습니다.");
+        String output = responseText(response);
+        if (output.isBlank()) throw new IllegalStateException("Gemini 응답에 분석 결과가 없습니다. finishReason="+response.path("candidates").path(0).path("finishReason").asText("unknown"));
         try {
             JsonNode root = mapper.readTree(output);
             log.info("Gemini AI가 반환한 errors JSON 배열:\n{}", mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root.path("errors")));
@@ -86,6 +86,67 @@ public class GeminiSpellCheckService {
             return new SpellCheckService.AnalysisResult(errors, "gemini");
         } catch (Exception ex) {
             throw new IllegalStateException("Gemini 분석 JSON을 읽지 못했습니다.", ex);
+        }
+    }
+
+    public String generatePracticeSentence(String category,String correct,String incorrect){
+        if(apiKey.isBlank())throw new IllegalStateException("GOOGLE_GEMINI_API_KEY가 설정되지 않았습니다.");
+        Map<String,Object> schema=Map.of("type","object","properties",Map.of("sentence",Map.of("type","string")),"required",List.of("sentence"));
+        String instruction="초등학교 1~3학년용 맞춤법 연습 문장 하나를 만들어요. 제공된 정답과 오답 중 정답만 자연스럽고 문법적으로 맞도록 짧은 새 문장을 만들고, 둘 중 하나가 들어갈 자리에 ___를 한 번 넣으세요. 원문 문장이나 추가 문맥은 주어지지 않으며 추측하지 마세요. 정답과 오답의 차이를 문맥으로 구별할 수 있어야 해요. 문장 하나만 만들고 설명, 보기, 번호는 넣지 마세요. JSON 형식으로 응답하세요.";
+        Map<String,Object> body=Map.of(
+            "systemInstruction",Map.of("parts",List.of(Map.of("text",instruction))),
+            "contents",List.of(Map.of("role","user","parts",List.of(Map.of("text",mapper.createObjectNode()
+                .put("category",category).put("correct",correct).put("incorrect",incorrect).toString())))),
+            "generationConfig",Map.of("responseMimeType","application/json","responseSchema",schema,
+                "thinkingConfig",Map.of("thinkingLevel","low"),"maxOutputTokens",1024));
+        JsonNode response=generateContent(body);
+        String output=response==null?"":responseText(response);
+        if(output.isBlank())throw new IllegalStateException("Gemini 문장 응답이 비어 있습니다. finishReason="+(response==null?"no-response":response.path("candidates").path(0).path("finishReason").asText("unknown")));
+        try{return mapper.readTree(output).path("sentence").asText();}
+        catch(Exception ex){throw new IllegalStateException("Gemini 문장 JSON을 읽지 못했습니다.",ex);}
+    }
+
+    private String responseText(JsonNode response){
+        List<String> textParts=new ArrayList<>();
+        response.path("candidates").path(0).path("content").path("parts").forEach(part->{
+            if(!part.path("thought").asBoolean(false)){
+                String text=part.path("text").asText("");
+                if(!text.isBlank())textParts.add(text);
+            }
+        });
+        return String.join("\n",textParts);
+    }
+
+    private JsonNode generateContent(Map<String, Object> body) {
+        try {
+            return generateContent(body,model);
+        } catch (HttpServerErrorException.ServiceUnavailable ex) {
+            if(fallbackModel.isBlank()||fallbackModel.equals(model))throw ex;
+            log.warn("Gemini 기본 모델 {}에서 재시도 후에도 503이 발생해 대체 모델 {}로 전환합니다.",model,fallbackModel);
+            return generateContent(body,fallbackModel);
+        }
+    }
+
+    private JsonNode generateContent(Map<String, Object> body,String modelName) {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return client.post()
+                        .uri("/models/{model}:generateContent", modelName)
+                        .header("x-goog-api-key", apiKey)
+                        .body(body)
+                        .retrieve()
+                        .body(JsonNode.class);
+            } catch (HttpServerErrorException.ServiceUnavailable ex) {
+                if (attempt >= 2) throw ex;
+                long delayMillis = 1000L * (attempt + 1);
+                log.warn("Gemini 모델 {}에서 503이 발생해 재시도합니다 ({}/2, {}ms).",modelName,attempt+1,delayMillis);
+                try {
+                    Thread.sleep(delayMillis);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Gemini 재시도 중 요청이 중단되었습니다.", interrupted);
+                }
+            }
         }
     }
 }

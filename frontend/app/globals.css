@@ -4432,8 +4432,21 @@ main {
   color: #a1948a;
 }
 .duo-step-label.is-current {
-  font-weight: 750;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-weight: 400;
   color: #80543c;
+  font-size: 13px;
+}
+.duo-step-start {
+  font-weight: 400;
+}
+.duo-step-remaining {
+  color: #80543c;
+  font-size: 12px;
+  font-weight: 400;
 }
 @media (max-width: 760px) {
   .learning-path-page {

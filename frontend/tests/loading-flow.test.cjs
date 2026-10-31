@@ -86,16 +86,38 @@ test('skip waits for server save, blocks duplicate clicks, and advances without 
   assert.deepEqual(calls, ['/questions/q1/skip']);
 });
 
-test('last skip refreshes records once after saving instead of twice', async () => {
+test('last skip shows the score before returning to learning and refreshes records once', async () => {
   const calls = [];
   const h = shell(async url => { calls.push(url); return []; });
   h.values[20] = 1;
   await find(h.render(), node => node.props?.onLater).props.onLater();
   await flush();
+  assert.equal(h.values[4], 'questions');
+  assert.equal(find(h.render(), node => node.props?.kind === 'failure')?.props.title, '이번 학습 결과');
+  assert.match(find(h.render(), node => node.props?.kind === 'failure')?.props.message, /10문제 중 0문제/);
+  button(h.render(), '오늘의 학습으로').props.onClick();
+  await flush();
   assert.equal(h.values[4], 'today');
-  for (const suffix of ['daily-learning', 'learning-history', 'question-reviews']) {
+  for (const suffix of ['daily-learning', 'learning-history', 'question-reviews', 'learning-progress']) {
     assert.equal(calls.filter(url => url.endsWith(suffix)).length, 1);
   }
+});
+
+test('learning resumes untouched questions, then retries only wrong or skipped questions', async () => {
+  const chapter = Array.from({ length: 10 }, (_, index) => ({
+    id: `q${index + 1}`, choices: ['가', '나'], correct: index < 7, attempted: index < 9,
+  }));
+  const first = shell(async url => url.endsWith('/questions/today') ? chapter : [], 'today');
+  await find(first.render(), node => node.props?.onQuestions).props.onQuestions();
+  const firstExercise = find(first.render(), node => node.props?.onLater);
+  assert.equal(firstExercise.props.question.id, 'q10');
+  assert.equal(firstExercise.props.total, 1);
+
+  const retry = shell(async url => url.endsWith('/questions/today') ? chapter.map(q => ({ ...q, attempted: true })) : [], 'today');
+  await find(retry.render(), node => node.props?.onQuestions).props.onQuestions();
+  const retryExercise = find(retry.render(), node => node.props?.onLater);
+  assert.equal(retryExercise.props.question.id, 'q8');
+  assert.equal(retryExercise.props.total, 3);
 });
 
 test('skip failure ends loading, keeps the question and allows retry', async () => {
@@ -112,7 +134,7 @@ test('rapid menu navigation and repeated active menu clicks share in-flight reco
   button(h.render(), '나의 학습').props.onClick();
   button(h.render(), '퀘스트').props.onClick();
   button(h.render(), '퀘스트').props.onClick();
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   pending.resolve([]); await flush();
   assert.equal(h.values[7], false);
 });
@@ -149,7 +171,7 @@ test('successful student data is reused across quick page visits, but failed res
   button(h.render(), '퀘스트').props.onClick();
   button(h.render(), '복습').props.onClick();
   await flush();
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
 
   const failedCalls = [];
   const failed = shell(async url => { failedCalls.push(url); if (url.endsWith('question-reviews')) throw new Error('offline'); return []; }, 'write');

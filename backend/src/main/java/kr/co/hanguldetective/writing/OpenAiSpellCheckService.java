@@ -36,4 +36,19 @@ public class OpenAiSpellCheckService {
             errors.add(new SpellCheckService.DetectedError(e.path("original").asText(),e.path("correct").asText(),e.path("startIndex").asInt(),e.path("endIndex").asInt(),e.path("category").asText(),e.path("explanation").asText(),e.path("hintLevel1").asText(),e.path("hintLevel2").asText(),choices));
         }return new SpellCheckService.AnalysisResult(errors,"openai");}catch(Exception e){throw new IllegalStateException("AI 분석 JSON을 읽지 못했습니다.",e);}
     }
+
+    public String generatePracticeSentence(String category,String correct,String incorrect){
+        if(apiKey.isBlank())throw new IllegalStateException("OPENAI_API_KEY가 설정되지 않았습니다.");
+        Map<String,Object> schema=Map.of("type","object","properties",Map.of("sentence",Map.of("type","string")),"required",List.of("sentence"),"additionalProperties",false);
+        Map<String,Object> body=Map.of("model",model,"store",false,"input",List.of(
+            Map.of("role","system","content","초등학교 1~3학년용 맞춤법 연습 문장 하나를 만들어요. 제공된 정답과 오답 중 정답만 자연스럽고 문법적으로 맞도록 짧은 새 문장을 만들고, 둘 중 하나가 들어갈 자리에 ___를 한 번 넣으세요. 원문 문장이나 추가 문맥은 주어지지 않으며 추측하지 마세요. 정답과 오답의 차이를 문맥으로 구별할 수 있어야 해요. 문장 하나만 만들고 설명, 보기, 번호는 넣지 마세요."),
+            Map.of("role","user","content",mapper.createObjectNode().put("category",category).put("correct",correct).put("incorrect",incorrect).toString())),
+            "text",Map.of("format",Map.of("type","json_schema","name","practice_sentence","strict",true,"schema",schema)),"max_output_tokens",120);
+        JsonNode response=client.post().uri("/responses").header("Authorization","Bearer "+apiKey).body(body).retrieve().body(JsonNode.class);
+        if(response==null)throw new IllegalStateException("OpenAI 문장 응답이 비어 있습니다.");
+        String output=null;for(JsonNode item:response.path("output"))for(JsonNode content:item.path("content"))if("output_text".equals(content.path("type").asText()))output=content.path("text").asText();
+        if(output==null||output.isBlank())throw new IllegalStateException("OpenAI 문장 응답을 찾을 수 없습니다.");
+        try{return mapper.readTree(output).path("sentence").asText();}
+        catch(Exception ex){throw new IllegalStateException("OpenAI 문장 JSON을 읽지 못했습니다.",ex);}
+    }
 }

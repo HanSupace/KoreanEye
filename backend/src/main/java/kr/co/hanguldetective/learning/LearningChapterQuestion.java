@@ -31,6 +31,11 @@ public class LearningChapterQuestion {
         return true;
     }
 
+    public void completeAfterReview() {
+        completed = true;
+        completedAt = java.time.Instant.now();
+    }
+
     public UUID getId() { return id; }
     public LearningChapter getChapter() { return chapter; }
     public LearningQuestion getQuestion() { return question; }

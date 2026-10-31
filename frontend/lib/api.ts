@@ -1,5 +1,5 @@
 export type Student = { id: string; name: string; grade: number; nickname?: string };
-export type Question = { id: string; category: string; questionType?: string; prompt: string; audioText?: string | null; choices: string[]; answer?: string; explanation?: string; correct?: boolean };
+export type Question = { id: string; category: string; questionType?: string; prompt: string; audioText?: string | null; choices: string[]; answer?: string; explanation?: string; correct?: boolean; attempted?: boolean };
 export type QuestionReviewItem = { id: string; category: string; questionType?: string; prompt: string; audioText?: string | null; choices: string[]; reviewAttempts: number; solved: boolean };
 export type QuestionReviewChapter = { chapterDate: string; chapterNumber: number; questions: QuestionReviewItem[] };
 export type WritingError = {

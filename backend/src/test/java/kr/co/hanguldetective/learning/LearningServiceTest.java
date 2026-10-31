@@ -27,9 +27,11 @@ class LearningServiceTest {
         assertEquals(0,history.stream().filter(day->day.date().equals(chapter.getChapterDate())).findFirst().orElseThrow().chaptersCompleted());
     }
     final QuestionAttemptRepository attempts=mock(QuestionAttemptRepository.class);
+    final LearningQuestionRepository questions=mock(LearningQuestionRepository.class);
+    final QuestionReviewRepository reviews=mock(QuestionReviewRepository.class);
     final WritingEntryRepository writings=mock(WritingEntryRepository.class);
     final LearningChapterRepository chapters=mock(LearningChapterRepository.class);
-    final LearningService service=new LearningService(mock(LearningQuestionRepository.class),attempts,mock(QuestionReviewRepository.class),chapters,mock(StudentService.class),writings,mock(WritingErrorRepository.class),new ObjectMapper());
+    final LearningService service=new LearningService(questions,attempts,reviews,chapters,mock(StudentService.class),writings,mock(WritingErrorRepository.class),new ObjectMapper());
     final UUID student=UUID.randomUUID();
 
     QuestionAttempt attempt(UUID question,boolean correct,Instant time){
@@ -101,5 +103,45 @@ class LearningServiceTest {
         var history=service.history(student,"owner");
         assertEquals(1,history.stream().filter(day->day.date().equals(today)).findFirst().orElseThrow().chaptersCompleted());
         assertEquals(1,history.stream().mapToInt(LearningService.DayRecord::chaptersCompleted).sum());
+    }
+
+    @Test void skippedQuestionStaysPendingUntilReviewIsSolved(){
+        var question=mock(LearningQuestion.class);
+        var questionId=UUID.randomUUID();
+        when(question.getId()).thenReturn(questionId);
+        when(question.getAnswer()).thenReturn("정답");
+        var chapter=new LearningChapter(null,LocalDate.now(ZoneId.of("Asia/Seoul")),1);
+        chapter.addQuestion(question);
+        chapter.getQuestions().get(0).complete(questionId); // 기존 건너뛰기 기록도 미완료로 취급
+        var profile=mock(kr.co.hanguldetective.student.StudentProfile.class);
+        when(profile.getId()).thenReturn(student);
+        var review=new QuestionReviewItem(profile,question,chapter.getChapterDate(),1);
+        var reviewId=UUID.randomUUID();
+        when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        when(reviews.findAllByStudentIdOrderByChapterDateDescChapterNumberDescCreatedAtAsc(student)).thenReturn(List.of(review));
+        when(reviews.findById(reviewId)).thenReturn(Optional.of(review));
+
+        assertEquals(1,service.progress(student,"owner").remaining());
+        assertFalse(service.daily(student,"owner").questionsDone());
+        assertTrue(service.attemptQuestionReview(reviewId,"owner","정답").correct());
+        assertEquals(0,chapter.getQuestions().stream().filter(item->!item.isCompleted()).count());
+        assertEquals(2,service.progress(student,"owner").chapterNumber());
+        assertTrue(service.daily(student,"owner").questionsDone());
+    }
+
+    @Test void newSkipCreatesReviewWithoutMarkingAnswerCorrect(){
+        var question=mock(LearningQuestion.class);
+        var questionId=UUID.randomUUID();
+        when(question.getId()).thenReturn(questionId);
+        when(questions.findById(questionId)).thenReturn(Optional.of(question));
+        var chapter=new LearningChapter(null,LocalDate.now(ZoneId.of("Asia/Seoul")),1);
+        chapter.addQuestion(question);
+        when(chapters.findAllByStudentIdOrderByChapterNumberDescCreatedAtDesc(student)).thenReturn(List.of(chapter));
+        when(reviews.findByStudentIdAndQuestionIdAndChapterNumber(student,questionId,1)).thenReturn(Optional.empty());
+
+        service.skip(questionId,student,"owner");
+
+        assertFalse(chapter.getQuestions().get(0).isCompleted());
+        verify(reviews).save(any(QuestionReviewItem.class));
     }
 }
