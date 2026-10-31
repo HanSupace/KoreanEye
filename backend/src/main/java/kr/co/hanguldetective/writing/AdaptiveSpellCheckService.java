@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.server.ResponseStatusException;
 import java.util.Optional;
+import java.util.Map;
 
 @Service
 public class AdaptiveSpellCheckService implements SpellCheckService {
@@ -63,6 +64,31 @@ public class AdaptiveSpellCheckService implements SpellCheckService {
             String reason=ex instanceof IllegalStateException&&ex.getMessage()!=null?ex.getMessage():ex.getClass().getSimpleName();
             if(reason.length()>240)reason=reason.substring(0,240);
             log.warn("AI 맞춤 예문 생성에 실패했어요: {}",reason);
+            return Optional.empty();
+        }
+    }
+
+    public Optional<WeeklyReportAiInsight> generateWeeklyReportInsight(Map<String,Object> metrics){
+        try{
+            WeeklyReportAiInsight insight;
+            if("gemini".equalsIgnoreCase(mode))insight=gemini.generateWeeklyReportInsight(metrics);
+            else if("openai".equalsIgnoreCase(mode))insight=openAi.generateWeeklyReportInsight(metrics);
+            else if(!geminiApiKey.isBlank())insight=gemini.generateWeeklyReportInsight(metrics);
+            else if(!apiKey.isBlank())insight=openAi.generateWeeklyReportInsight(metrics);
+            else return Optional.empty();
+            if(insight==null)return Optional.empty();
+            String praise=insight.praise()==null?"":insight.praise().strip();
+            String nextGoal=insight.nextGoal()==null?"":insight.nextGoal().strip();
+            String weakness=insight.weaknessSummary()==null?"":insight.weaknessSummary().strip();
+            String advice=insight.parentAdvice()==null?"":insight.parentAdvice().strip();
+            if(praise.isBlank()||nextGoal.isBlank()||weakness.isBlank()||advice.isBlank()
+                    ||praise.length()>120||nextGoal.length()>120||weakness.length()>160||advice.length()>180){
+                log.warn("AI 주간 리포트 문구를 사용하지 않았어요: 응답 형식이 올바르지 않습니다.");
+                return Optional.empty();
+            }
+            return Optional.of(new WeeklyReportAiInsight(praise,nextGoal,weakness,advice));
+        }catch(Exception ex){
+            log.warn("AI 주간 리포트 생성에 실패했어요: {}",ex.getClass().getSimpleName());
             return Optional.empty();
         }
     }

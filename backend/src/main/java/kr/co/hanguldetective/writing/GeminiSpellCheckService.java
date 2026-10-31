@@ -106,6 +106,26 @@ public class GeminiSpellCheckService {
         catch(Exception ex){throw new IllegalStateException("Gemini 문장 JSON을 읽지 못했습니다.",ex);}
     }
 
+    public WeeklyReportAiInsight generateWeeklyReportInsight(Map<String,Object> metrics)throws Exception{
+        if(apiKey.isBlank())throw new IllegalStateException("GOOGLE_GEMINI_API_KEY가 설정되지 않았습니다.");
+        Map<String,Object> schema=Map.of("type","object","properties",Map.of(
+            "praise",Map.of("type","string"),"nextGoal",Map.of("type","string"),
+            "weaknessSummary",Map.of("type","string"),"parentAdvice",Map.of("type","string")),
+            "required",List.of("praise","nextGoal","weaknessSummary","parentAdvice"));
+        String instruction="초등학생의 보호자를 돕는 주간 학습 코치예요. 입력된 익명 집계만 근거로 한국어 JSON을 작성하세요. praise에는 실제 활동을 인정하는 칭찬 한 문장, nextGoal에는 아이가 다음에 할 작은 학습 목표, weaknessSummary에는 이번 주 기록에서 관찰된 약점 유형과 근거(횟수)를 쉬운 말로 요약하세요. parentAdvice에는 보호자가 집에서 바로 해볼 수 있는 구체적이고 부담 적은 연습 방법을 제안하세요. weaknessCategories가 비었거나 관찰 횟수가 2회 미만이면 뚜렷한 약점이라 단정하지 말고 더 관찰이 필요하다고 설명하세요. 적은 표본을 전체 실력으로 일반화하지 마세요. 진단, 낙인, 비교, 죄책감을 유발하지 말고, 사실에 없는 성장이나 감정을 만들지 마세요. 원문·이름·개인정보를 요청하거나 추측하지 마세요. 각 값은 100자 이내로 간결히 쓰고 JSON만 반환하세요.";
+        Map<String,Object> body=Map.of(
+            "systemInstruction",Map.of("parts",List.of(Map.of("text",instruction))),
+            "contents",List.of(Map.of("role","user","parts",List.of(Map.of("text",mapper.writeValueAsString(metrics))))),
+            "generationConfig",Map.of("responseMimeType","application/json","responseSchema",schema,
+                "thinkingConfig",Map.of("thinkingLevel","low"),"maxOutputTokens",512));
+        JsonNode response=generateContent(body);
+        String output=response==null?"":responseText(response);
+        if(output.isBlank())throw new IllegalStateException("Gemini 주간 리포트 응답이 비어 있습니다.");
+        JsonNode insight=mapper.readTree(output);
+        return new WeeklyReportAiInsight(insight.path("praise").asText(),insight.path("nextGoal").asText(),
+            insight.path("weaknessSummary").asText(),insight.path("parentAdvice").asText());
+    }
+
     private String responseText(JsonNode response){
         List<String> textParts=new ArrayList<>();
         response.path("candidates").path(0).path("content").path("parts").forEach(part->{

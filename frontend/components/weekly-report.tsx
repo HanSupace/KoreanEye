@@ -80,6 +80,12 @@ export default function WeeklyReport({ token, studentId, onReview, onContinueLea
     onContinueLearning();
   };
   const recommendation = report ? weeklyLearningReviewRecommendation(report) : "";
+  const weaknessLabels: Record<string, string> = {
+    SPACING: "띄어쓰기", PRONUNCIATION_SPELLING: "소리와 표기가 다른 맞춤법",
+    FINAL_CONSONANT: "받침 맞춤법", DOE_DWAE: "돼요·되요", AN_ANH: "안·않",
+    PARTICLE: "조사", PUNCTUATION: "문장 부호", CHARACTER_OMISSION: "글자 빠뜨리기",
+    CHARACTER_CONFUSION: "헷갈리는 글자", GRAMMAR_EXPRESSION: "문장 표현", OTHER: "기타 맞춤법",
+  };
 
   return <div className="content weekly-report">
     <div className="section-head"><div><h1>이번 주 탐정 리포트</h1><p>이번 주에 어떤 단서를 찾았는지 살펴볼까요?</p></div></div>
@@ -118,15 +124,34 @@ export default function WeeklyReport({ token, studentId, onReview, onContinueLea
           {report.days.some(day => day.questions > 0) && <p className="weekly-report-peak-note">● 가장 많이 학습한 날: {report.days.filter(day => day.questions === maxQuestions).map(day => `${formatReportDate(day.date)}`).join(", ")}</p>}
           <p className="muted">다른 날 같은 문제를 다시 풀면 각 날짜에 표시돼요. 그래서 막대의 합과 주간 문제 수는 다를 수 있어요.</p>
         </section>
+        <section className="panel weekly-report-weaknesses" aria-labelledby="weekly-weakness-title">
+          <h2 id="weekly-weakness-title">이번 주 다시 볼 유형</h2>
+          {report.weaknesses.length > 0 ? <ul>{report.weaknesses.slice(0, 3).map(item => <li key={item.category}>
+            <span>{weaknessLabels[item.category] ?? item.category}</span><strong>{item.count}회</strong>
+          </li>)}</ul> : <p className="muted">이번 주에 기록된 반복 유형이 없어요. 새로운 문제를 만나며 연습을 이어가요.</p>}
+          <div className="weekly-report-parent-insight">
+            <h3>관찰된 어려움</h3>
+            <p>{report.aiWeaknessSummary?.trim() || (report.weaknesses[0]?.count >= 2
+              ? `${weaknessLabels[report.weaknesses[0].category] ?? report.weaknesses[0].category} 유형에서 ${report.weaknesses[0].count}회의 오답 기록이 있어요. 이번 주 기록을 바탕으로 한 관찰이며, 더 연습하며 살펴봐요.`
+              : "아직 반복되는 어려움을 판단할 만큼 기록이 충분하지 않아요. 학습을 이어가며 살펴봐요.")}</p>
+            <h3>집에서 이렇게 도와주세요</h3>
+            <p>{report.aiParentAdvice?.trim() || (report.weaknesses[0]?.category === "SPACING"
+              ? "짧은 문장을 함께 읽고, 단어와 단어 사이를 손가락으로 짚으며 띄어쓰기를 살펴봐 주세요."
+              : report.weaknesses[0] ? `‘${weaknessLabels[report.weaknesses[0].category] ?? "맞춤법"}’이 들어간 짧은 문장을 함께 읽고, 비슷한 표현을 아이가 직접 골라보게 해주세요.`
+              : "아이가 쓴 짧은 문장 한 개를 함께 읽고, 어떤 부분이 재미있었는지 이야기해 주세요.")}</p>
+            {(report.aiWeaknessSummary || report.aiParentAdvice) && <small className="weekly-report-ai-note">학습 유형과 횟수만 참고한 AI 안내예요. 진단이 아닌 이번 주 학습 기록의 요약입니다.</small>}
+          </div>
+        </section>
         <section className="panel weekly-report-feedback" aria-labelledby="weekly-feedback-title">
           <h2 id="weekly-feedback-title" className="weekly-report-card-title"><ReportIcon kind="search" />이번 주 탐정의 한마디</h2>
-          <h3>{feedback!.title}</h3><p>{feedback!.description}</p>
+          <h3>{feedback!.title}</h3><p>{report.aiPraise?.trim() || feedback!.description}</p>
+          {report.aiPraise && <small className="weekly-report-ai-note">학습 통계를 바탕으로 AI가 제안했어요.</small>}
           <div className="weekly-report-goal" aria-labelledby="weekly-goal-title">
             <h3 id="weekly-goal-title">{goal!.title}</h3><p>{goal!.description}</p>
             <div className="weekly-report-goal-comparison" role="img" aria-label={`이번 주 학습 ${report.learningDays}일, ${goal!.period === "current" ? "이번" : "다음"} 주 추천 ${goal!.targetDays}일`}>
               {Array.from({ length: goal!.targetDays }, (_, index) => <span key={index} className={`weekly-report-goal-day${index < report.learningDays ? " is-learned" : ""}`} />)}
             </div>
-            <p className="muted">{recommendation}</p>
+            <p className="muted">{report.aiNextGoal?.trim() || recommendation}</p>
             <div className="weekly-report-actions">
               {canContinueLearning && <button type="button" className="btn weekly-report-continue-button" onClick={continueLearning}>오늘 학습 계속하기</button>}
               <button type="button" className="btn secondary" onClick={onReview}>복습 노트로 이동</button>

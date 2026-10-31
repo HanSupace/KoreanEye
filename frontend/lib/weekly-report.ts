@@ -6,6 +6,10 @@ export type WeeklyLearningReport = {
   days: { date: string; questions: number }[];
   weaknesses: { category: string; count: number }[];
   noRecordedActivity: boolean;
+  aiPraise: string | null;
+  aiNextGoal: string | null;
+  aiWeaknessSummary: string | null;
+  aiParentAdvice: string | null;
 };
 
 const spellingCategories = new Set(["PRONUNCIATION_SPELLING", "FINAL_CONSONANT", "DOE_DWAE", "AN_ANH"]);

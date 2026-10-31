@@ -4992,6 +4992,13 @@ main {
 .weekly-report-column.is-peak b,
 .weekly-report-peak-note { color: #725337; }
 .weekly-report .weekly-report-peak-note { font-size: 12px; overflow-wrap: anywhere; }
+.weekly-report-weaknesses ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-width: 560px; }
+.weekly-report-weaknesses li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; border-radius: 12px; background: #f8f4ef; color: var(--ink); }
+.weekly-report-weaknesses li strong { color: #725337; white-space: nowrap; }
+.weekly-report-parent-insight { max-width: 720px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.weekly-report-parent-insight h3 { margin: 0 0 6px; font-size: 15px; color: var(--ink); }
+.weekly-report-parent-insight p { margin: 0 0 16px; }
+.weekly-report-ai-note { display: block; margin-top: 8px; }
 .weekly-report-feedback { background: var(--paper); border-color: var(--line); }
 .weekly-report-feedback h3 { margin: 0 0 8px; font-size: 17px; color: var(--ink); line-height: 1.6; }
 .weekly-report-goal { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
