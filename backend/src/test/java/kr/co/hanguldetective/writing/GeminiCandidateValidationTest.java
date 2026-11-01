@@ -22,7 +22,7 @@ class GeminiCandidateValidationTest {
         var mapper=new ObjectMapper();
         var builder=RestClient.builder();
         var server=MockRestServiceServer.bindTo(builder).build();
-        var gemini=new GeminiSpellCheckService(builder,mapper,"test-only","test-model");
+        var gemini=new GeminiSpellCheckService(builder,mapper,"test-only","test-model","test-fallback-model");
         var error=Map.of("original","빨리","correct","빨리","startIndex",4,"endIndex",6,"category","OTHER",
             "explanation","설명","hintLevel1","힌트1","hintLevel2","힌트2","choices",List.of("빨리"));
         var output=mapper.writeValueAsString(Map.of("errors",List.of(error)));

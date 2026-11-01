@@ -15,7 +15,8 @@ class GeminiSpellCheckLiveTest {
         String key=System.getenv("GOOGLE_GEMINI_API_KEY");
         assumeTrue(key!=null&&!key.isBlank(),"Requires GOOGLE_GEMINI_API_KEY in the process environment");
         String model=System.getenv().getOrDefault("GOOGLE_GEMINI_MODEL","gemini-3.1-flash-lite");
-        return new GeminiSpellCheckService(RestClient.builder(),new ObjectMapper(),key,model);
+        String fallbackModel=System.getenv().getOrDefault("GOOGLE_GEMINI_FALLBACK_MODEL","gemini-3.6-flash");
+        return new GeminiSpellCheckService(RestClient.builder(),new ObjectMapper(),key,model,fallbackModel);
     }
 
     @Test void correctSentencesHaveNoActionableCandidates() {
