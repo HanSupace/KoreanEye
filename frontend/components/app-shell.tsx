@@ -10,6 +10,7 @@ import { NavIcon } from "./detective-art";
 
 import LearningNotebook, { DayRecord } from "./learning-notebook";
 import HandwritingPad, { InputMode, InputModePicker } from "./handwriting-pad";
+import HandwritingConfirmation from "./handwriting-confirmation";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, Question, QuestionReviewChapter, QuestionReviewItem, Student, Writing, WritingError } from "@/lib/api";
 
@@ -47,10 +48,10 @@ function speakKorean(text: string) {
   window.speechSynthesis.speak(utterance);
 }
 
-function QuestionExercise({ question, index, total, selected, onSelect, result, offline, busy, onSubmit, onNext, onLater, inputMode, onInputMode, onRecognize }: {
+function QuestionExercise({ question, index, total, selected, onSelect, result, offline, busy, onSubmit, onNext, onLater, inputMode, onInputMode, onRecognize, onRecognized }: {
   question?: Question; index: number; total: number; selected: string; onSelect: (value: string) => void;
   result: AttemptResult | null; offline: boolean; busy: boolean; onSubmit: () => void; onNext: () => void;
-  onLater: () => void; inputMode: InputMode; onInputMode: (mode: InputMode) => void; onRecognize: (image: string) => Promise<string>;
+  onLater: () => void; inputMode: InputMode; onInputMode: (mode: InputMode) => void; onRecognize: (image: string) => Promise<string>; onRecognized: (text: string) => void;
 }) {
   const listening = question?.questionType === "LISTEN_AND_TYPE";
   return <div className="content">
@@ -67,10 +68,10 @@ function QuestionExercise({ question, index, total, selected, onSelect, result, 
           단어 다시 듣기
         </button>
         <InputModePicker value={inputMode} onChange={onInputMode} label="받아쓰기 입력 방식" />
-        {inputMode === "HANDWRITING" ? <>{selected && <div className="recognized-text">읽은 글씨: <b>{selected}</b></div>}<HandwritingPad onRecognize={async image => { const text = await onRecognize(image); if (text) onSelect(text.replace(/\s+/g, "").trim()); return text; }} disabled={!!result || busy} /></> : <input className={`field-input dictation-input ${result && !result.correct ? "is-incorrect" : result?.correct ? "is-correct" : ""}`} value={selected} onChange={event => onSelect(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && selected.trim() && !result && !busy) onSubmit(); }} disabled={!!result} autoComplete="off" autoCapitalize="off" aria-label="들은 단어 입력" placeholder="들은 단어를 써보세요" />}
+        {inputMode === "HANDWRITING" ? <>{selected && <div className="recognized-text">읽은 글씨: <b>{selected}</b></div>}<HandwritingPad onRecognize={onRecognize} onRecognized={text => onRecognized(text.replace(/\s+/g, "").trim())} disabled={!!result || busy} /></> : <input className={`field-input dictation-input ${result && !result.correct ? "is-incorrect" : result?.correct ? "is-correct" : ""}`} value={selected} onChange={event => onSelect(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && selected.trim() && !result && !busy) onSubmit(); }} disabled={!!result} autoComplete="off" autoCapitalize="off" aria-label="들은 단어 입력" placeholder="들은 단어를 써보세요" />}
       </div> : <div className="choices">{question.choices.map((choice, choiceIndex) => <button key={choice} className={`choice ${selected === choice ? "selected" : ""} ${result?.correct && selected === choice ? "correct" : ""} ${result && !result.correct && selected === choice ? "incorrect" : ""}`} onClick={() => !result && onSelect(choice)} disabled={!!result}><span className="choice-letter">{String(choiceIndex + 1).padStart(2, "0")}</span>{choice}</button>)}</div>}
       {result && <div className={`feedback ${result.correct ? "" : "incorrect"}`}>{result.message}</div>}
-      <div className="row-actions question-actions">{!result && <button className="btn secondary" onClick={onLater} disabled={busy}>건너뛰기</button>}{result ? <button className="btn" onClick={onNext}>{index === total - 1 ? "결과 보기" : "다음 문제"}</button> : <button className="btn" disabled={!selected.trim() || busy} onClick={onSubmit}>{busy ? "확인 중…" : "정답 확인"}</button>}</div>
+      <div className="row-actions question-actions">{!result && <button className="btn secondary" onClick={onLater} disabled={busy}>건너뛰기</button>}{result ? <button className="btn" onClick={onNext}>{index === total - 1 ? "결과 보기" : "다음 문제"}</button> : <button className="btn" disabled={!selected.trim() || busy} onClick={() => onSubmit()}>{busy ? "확인 중…" : "정답 확인"}</button>}</div>
     </div>}
   </div>;
 }
@@ -107,6 +108,7 @@ export default function AppShell() {
   const [qSelected, setQSelected] = useState("");
   const [qResult, setQResult] = useState<AttemptResult | null>(null);
   const [story, setStory] = useState("");
+  const [handwritingConfirmation, setHandwritingConfirmation] = useState<{ kind: "dictation" | "writing"; text: string } | null>(null);
   const [writing, setWriting] = useState<Writing | null>(null);
   const [hints, setHints] = useState<Record<string, string>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -135,6 +137,7 @@ export default function AppShell() {
   }
   useEffect(() => () => {
     activityScope.current = { ...activityScope.current };
+    setHandwritingConfirmation(null);
     setModal(null); setBusy(false);
   }, [token, student?.id, page]);
   const modalError = (e: unknown, retry: () => void) => setModal({ kind: "error", title: "잠시 문제가 생겼어요", message: e instanceof Error ? e.message : "연결을 확인하고 다시 시도해 주세요.", retry });
@@ -288,12 +291,15 @@ export default function AppShell() {
     try { await refreshStudentData(token, selected); } catch (e) { fail(e); }
   };
 
-  const submitQuestion = async () => {
-    if (!token || !student || !questions[qIndex] || !qSelected || qResult || answerRequest.current) return;
+  const submitQuestion = async (answer: string) => {
+    if (typeof answer !== "string" || !answer.trim()) return;
+    if (!token || !student || !questions[qIndex] || qResult || busy || answerRequest.current) return;
     const currentQuestion = questions[qIndex];
     if (offlineQuestions) {
-      const correct = currentQuestion.answer === qSelected;
-      setQResult({ correct, message: correct ? "정답이에요! 다음 문장도 풀어봐요." : "거의 맞았어요. 다른 단어를 골라봐요.", answer: correct ? qSelected : null });
+      const correct = currentQuestion.answer === answer;
+      setHandwritingConfirmation(null);
+      if (qSelected !== answer) setQSelected(answer);
+      setQResult({ correct, message: correct ? "정답이에요! 다음 문장도 풀어봐요." : "거의 맞았어요. 다른 단어를 골라봐요.", answer: correct ? answer : null });
       if (correct) { setQuestions(items => items.map((item, index) => index === qIndex ? { ...item, correct: true } : item)); setChapterCorrectCount(count => count + 1); }
       if (qIndex >= questions.length - 1) showChapterSummary(chapterCorrectCount + (correct ? 1 : 0));
       return;
@@ -302,9 +308,11 @@ export default function AppShell() {
     const scope = activityScope.current;
     setModal({ kind: "loading", title: "정답을 확인하고 있어요..." });
     try {
-      const result = await api<AttemptResult>(`/questions/${currentQuestion.id}/attempt`, { method: "POST", body: JSON.stringify({ studentId: student.id, answer: qSelected }) }, token);
+      const result = await api<AttemptResult>(`/questions/${currentQuestion.id}/attempt`, { method: "POST", body: JSON.stringify({ studentId: student.id, answer }) }, token);
       studentDataCache.current = null;
       if (activityScope.current !== scope) return;
+      setHandwritingConfirmation(null);
+      if (qSelected !== answer) setQSelected(answer);
       setQResult(result);
       if (result.correct) {
         studentDataCache.current = null;
@@ -316,7 +324,7 @@ export default function AppShell() {
       } else {
         setModal(result.correct ? { kind: "success", title: "정답이에요!", message: "멋지게 단서를 찾았어요!" } : { kind: "failure", title: "다시 도전해 봐요!", message: "조금만 더 생각해 볼까요?" });
       }
-    } catch (e) { if (activityScope.current === scope) modalError(e, submitQuestion); } finally { answerRequest.current = false; if (activityScope.current === scope) setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) modalError(e, () => void submitQuestion(answer)); } finally { answerRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const submitQuestionReview = async (item: QuestionReviewItem) => {
@@ -384,27 +392,48 @@ export default function AppShell() {
   };
 
   const profanityBlocked = containsProfanity(story);
-  const analyzeWriting = async () => {
-    if (containsProfanity(story)) return;
+  const submitHandwritingConfirmation = () => {
+    if (!handwritingConfirmation || busy) return;
+    const { kind, text } = handwritingConfirmation;
+    if (!text.trim()) return;
+    setError("");
+    if (kind === "dictation") {
+      setQSelected(text);
+      void submitQuestion(text);
+    } else {
+      setStory(text);
+      if (containsProfanity(text)) { setError(profanityMessage); return; }
+      void analyzeWriting(text);
+    }
+  };
+  const rewriteHandwriting = () => {
+    setHandwritingConfirmation(null);
+    setError("");
+  };
+  const analyzeWriting = async (submittedStory = story) => {
+    if (containsProfanity(submittedStory)) return;
     if (busy || writingRequest.current) return;
-    if (!token || !student || !story.trim()) { setError("한 문장만 적어도 좋아요."); return; }
+    if (!token || !student || !submittedStory.trim()) { setError("한 문장만 적어도 좋아요."); return; }
     const selectedId = student.id;
     const scope = activityScope.current;
     writingRequest.current = true;
     setBusy(true); setError("");
     setModal({ kind: "loading", title: "글 속 단서를 찾고 있어요..." });
     try {
-      const result = await api<Writing>(`/students/${student.id}/writings`, { method: "POST", body: JSON.stringify({ text: story }) }, token);
+      const result = await api<Writing>(`/students/${student.id}/writings`, { method: "POST", body: JSON.stringify({ text: submittedStory }) }, token);
       studentDataCache.current = null;
       if (activeStudent.current !== selectedId || activityScope.current !== scope) return;
+      setHandwritingConfirmation(null);
+      setStory("");
       setModal(null); setWriting(result); setHints({}); setPage("writingResult");
       void refreshStudentData(token, student, true);
-    } catch (e) { if (activityScope.current === scope) modalError(e, analyzeWriting); } finally { writingRequest.current = false; if (activityScope.current === scope) setBusy(false); }
+    } catch (e) { if (activityScope.current === scope) modalError(e, () => void analyzeWriting(submittedStory)); } finally { writingRequest.current = false; if (activityScope.current === scope) setBusy(false); }
   };
 
   const recognizeHandwriting = async (image: string) => {
     if (!token) return "";
     const scope = activityScope.current;
+    setHandwritingConfirmation(null);
     setError("");
     try {
       const result = await api<{ text: string }>("/ocr/recognize", { method: "POST", body: JSON.stringify({ image }) }, token);
@@ -501,9 +530,9 @@ export default function AppShell() {
   const renderToday = () => <LearningNotebook key={student?.id} records={records} progress={learningProgress}
     onQuestions={startQuestions} onWeeklyReport={() => setPage("weeklyReport")} />;
 
-  const renderQuestions = () => <QuestionExercise question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={submitQuestion} onNext={nextQuestion} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={recognizeHandwriting} />;
+  const renderQuestions = () => <QuestionExercise key={`${questions[qIndex]?.id ?? qIndex}:${qResult ? "submitted" : "draft"}`} question={questions[qIndex]} index={qIndex} total={questions.length} selected={qSelected} onSelect={setQSelected} result={qResult} offline={offlineQuestions} busy={busy} onSubmit={() => void submitQuestion(qSelected)} onNext={nextQuestion} onLater={skipQuestion} inputMode={dictationInputMode} onInputMode={setDictationInputMode} onRecognize={image => { setQSelected(""); return recognizeHandwriting(image); }} onRecognized={text => setHandwritingConfirmation({ kind: "dictation", text })} />;
 
-  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><div className="writing-input-heading"><label htmlFor="story" style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" /></div>{writingInputMode === "HANDWRITING" ? <><HandwritingPad allowErasing onRecognize={async image => { const text = await recognizeHandwriting(image); if (text) setStory(current => `${current}${current.trim() ? "\n" : ""}${text}`.slice(0, 5000)); return text; }} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" aria-invalid={profanityBlocked} aria-describedby={profanityBlocked ? "writing-language-warning" : undefined} className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{profanityBlocked && <div id="writing-language-warning" className="form-error" role="alert"><strong>{profanityTitle}</strong><p>{profanityMessage}</p></div>}{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={analyzeWriting} disabled={busy || profanityBlocked}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
+  const renderWrite = () => <div className="content"><div className="section-head"><div><h1>오늘의 이야기를 남겨요.</h1><p>오늘 있었던 일, 좋아하는 것… 무엇이든 써봐요.</p></div><span className="qcategory">글감 자유</span></div><div className="panel writing-paper"><div className="paper-meta"><span>탐정의 관찰 일지</span><span>자유 기록</span></div><div className="writing-input-heading"><label htmlFor="story" style={{ fontSize: 18, fontWeight: 800 }}>나의 이야기</label><InputModePicker value={writingInputMode} onChange={setWritingInputMode} label="글쓰기 입력 방식" /></div>{writingInputMode === "HANDWRITING" ? <><HandwritingPad allowErasing onRecognize={recognizeHandwriting} onRecognized={text => setHandwritingConfirmation({ kind: "writing", text: text.slice(0, 5000) })} disabled={busy} />{story && <div className="recognized-text">인식한 글: <p>{story}</p></div>}</> : <textarea id="story" aria-invalid={profanityBlocked} aria-describedby={profanityBlocked ? "writing-language-warning" : undefined} className="textarea" maxLength={5000} value={story} onChange={e=>setStory(e.target.value)} placeholder="오늘 어떤 일이 있었나요? 생각나는 대로 써봐요!" />}<div className="write-tools"><span>{story.length}자 · 짧은 글도 좋아요</span><button className="example-btn" onClick={() => setStory("오늘 친구랑 가치 놀았다. 집에와서 밥을 먹었다.")}>예시 문장 넣기</button></div>{profanityBlocked && <div id="writing-language-warning" className="form-error" role="alert"><strong>{profanityTitle}</strong><p>{profanityMessage}</p></div>}{error&&<p className="form-error" role="alert">{error}</p>}<div className="row-actions"><button className="btn secondary" onClick={() => setPage("today")}>돌아가기</button><button className="btn" onClick={() => void analyzeWriting()} disabled={busy || profanityBlocked}>{busy?"단서를 찾고 있어요…":"단서 찾기"}</button></div></div></div>;
 
   const renderMyPage = () => <div className="content mypage">
     <div className="section-head"><div><h1>마이페이지</h1><p>내 정보와 학습 기록을 한곳에서 관리하세요.</p></div><button className="btn secondary" onClick={() => setPage("addStudent")}>탐정 추가</button></div>
@@ -635,6 +664,6 @@ export default function AppShell() {
     <div className="app-main-column">
       <header className="app-topbar"><button className="mobile-menu-button" aria-label="메뉴 열기" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(v => !v)}>☰</button><div className="mobile-brand"><span className="mark"><Image src="/logo-mark.png" alt="" width={52} height={58} priority /></span>한글탐정단</div><div className="topbar-title"><span className="breadcrumb">한글탐정단</span><span className="breadcrumb-slash">/</span> {menuItems.find(item => item.id === page)?.label ?? "나의 학습"}</div><div className="topbar-right">{students.length > 1 && <label className="topbar-student">탐정<select aria-label="탐정 선택" value={student.id} onChange={e => switchStudent(e.target.value)}>{students.map(s => <option key={s.id} value={s.id}>{s.name} · 초{s.grade}</option>)}</select></label>}<span className="topbar-streak">오늘의 미션 {Number(daily.questionsDone)+Number(daily.writingDone)} / 2 완료</span><button className="logout-button" onClick={logout} aria-label={`${username} 로그아웃`}>로그아웃</button></div></header>
       <main className="app-main-content">{pageDataLoading && ["home", "today", "quests", "review"].includes(page) ? <div className="learning-record-loading"><div className="panel"><LoadingIndicator message={pageLoadingCopy.title} /><p className="muted">{pageLoadingCopy.description}</p></div></div> : pageDataError && ["home", "today", "quests", "review"].includes(page) ? <div className="content panel" role="alert"><p>필요한 학습 기록을 불러오지 못했어요.</p><button className="btn" onClick={() => void refreshStudentData(token, student, true)}>다시 불러오기</button></div> : page === "addStudent" ? renderAddStudent() : page === "home" ? renderToday() : page === "today" ? renderToday() : page === "questions" ? renderQuestions() : page === "write" ? renderWrite() : page === "writingResult" ? renderWritingResult() : page === "quests" ? <Quests records={records} reviewDone={daily.reviewDone} onQuestions={startQuestions} onWrite={startWriting} onReview={() => setPage("review")} /> : page === "ranking" ? <Ranking token={token} selectedId={student.id} /> : page === "weeklyReport" ? <WeeklyReport key={`${token}:${student.id}`} token={token} studentId={student.id} onReview={() => navigate("review")} onContinueLearning={() => navigate("today")} /> : page === "mypage" ? renderMyPage() : renderReview()}</main>
-    </div>{modal && <ActivityModal kind={modal.kind} title={modal.title} message={modal.message}>{modal.action ? <button className="btn" onClick={modal.action.run}>{modal.action.label}</button> : modal.kind === "success" ? <button className="btn" onClick={nextQuestion}>다음 문제</button> : modal.kind === "failure" ? <><button className="btn secondary" onClick={nextQuestion}>다음 문제</button><button className="btn" onClick={() => { setModal(null); setQResult(null); setQSelected(""); }}>다시하기</button></> : modal.kind === "error" ? <><button className="btn secondary" onClick={() => setModal(null)}>닫기</button><button className="btn" onClick={() => modal.retry?.()}>다시 시도</button></> : null}</ActivityModal>}{busy && !modal && <div className="busy-status"><LoadingIndicator message="처리하고 있어요…" /></div>}{toast && <div className="toast" role="status">{toast}</div>}{error && token && <div className="toast error-toast" role="alert" onClick={() => setError("")}>{error}　×</div>}
+    </div>{modal && <ActivityModal kind={modal.kind} title={modal.title} message={modal.message}>{modal.action ? <button className="btn" onClick={modal.action.run}>{modal.action.label}</button> : modal.kind === "success" ? <button className="btn" onClick={nextQuestion}>다음 문제</button> : modal.kind === "failure" ? <><button className="btn secondary" onClick={nextQuestion}>다음 문제</button><button className="btn" onClick={() => { setModal(null); setQResult(null); setQSelected(""); }}>다시하기</button></> : modal.kind === "error" ? <><button className="btn secondary" onClick={() => setModal(null)}>닫기</button><button className="btn" onClick={() => modal.retry?.()}>다시 시도</button></> : null}</ActivityModal>}{handwritingConfirmation && !busy && !modal && <HandwritingConfirmation text={handwritingConfirmation.text} submitting={busy} onChange={text => setHandwritingConfirmation(current => current ? { ...current, text } : current)} onSubmit={submitHandwritingConfirmation} onRewrite={rewriteHandwriting} />}{busy && !modal && <div className="busy-status"><LoadingIndicator message="처리하고 있어요…" /></div>}{toast && <div className="toast" role="status">{toast}</div>}{error && token && <div className="toast error-toast" role="alert" onClick={() => setError("")}>{error}　×</div>}
   </div>;
 }
