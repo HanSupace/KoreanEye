@@ -27,6 +27,16 @@ function drawStroke(ctx: CanvasRenderingContext2D, { points, tool, width }: InkS
   ctx.globalCompositeOperation = "source-over";
 }
 
+function canvasHasInk(canvas: HTMLCanvasElement) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return false;
+  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index + 3] > 0 && (data[index] < 240 || data[index + 1] < 240 || data[index + 2] < 240)) return true;
+  }
+  return false;
+}
+
 export function InputModePicker({ value, onChange, label = "입력 방식" }: { value: InputMode; onChange: (mode: InputMode) => void; label?: string }) {
   return <div className="input-mode-picker" role="group" aria-label={label}>
     <button type="button" className={value === "TYPE" ? "selected" : ""} aria-pressed={value === "TYPE"} onClick={() => onChange("TYPE")}>⌨ 타자</button>
@@ -34,7 +44,7 @@ export function InputModePicker({ value, onChange, label = "입력 방식" }: { 
   </div>;
 }
 
-export default function HandwritingPad({ onRecognize, disabled = false, allowErasing = false }: { onRecognize: (image: string) => Promise<string>; disabled?: boolean; allowErasing?: boolean }) {
+export default function HandwritingPad({ onRecognize, onRecognized, disabled = false, allowErasing = false }: { onRecognize: (image: string) => Promise<string>; onRecognized?: (text: string) => void; disabled?: boolean; allowErasing?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activePointer = useRef<number | null>(null);
   const strokes = useRef<InkStroke[]>([]);
@@ -42,9 +52,11 @@ export default function HandwritingPad({ onRecognize, disabled = false, allowEra
   const [hasInk, setHasInk] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
   const recognizeRequest = useRef(false);
+  const mounted = useRef(true);
   const [tool, setTool] = useState<InkTool>("pen");
 
   useEffect(() => {
+    mounted.current = true;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const resize = () => {
@@ -84,6 +96,7 @@ export default function HandwritingPad({ onRecognize, disabled = false, allowEra
     const onResolutionChange = () => { resize(); watchResolution(); };
     watchResolution();
     return () => {
+      mounted.current = false;
       observer.disconnect();
       window.removeEventListener("resize", resize);
       resolution.removeEventListener("change", onResolutionChange);
@@ -130,6 +143,7 @@ export default function HandwritingPad({ onRecognize, disabled = false, allowEra
     if (activePointer.current !== event.pointerId) return;
     activePointer.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (allowErasing && tool === "eraser") setHasInk(canvasHasInk(event.currentTarget));
   };
   const clear = () => {
     const canvas = canvasRef.current; if (!canvas) return;
@@ -146,6 +160,7 @@ export default function HandwritingPad({ onRecognize, disabled = false, allowEra
   };
   const recognize = async () => {
     const canvas = canvasRef.current; if (!canvas || !hasInk || disabled || recognizeRequest.current) return;
+    if (!canvasHasInk(canvas)) { setHasInk(false); return; }
     recognizeRequest.current = true;
     setRecognizing(true);
     try {
@@ -159,7 +174,8 @@ export default function HandwritingPad({ onRecognize, disabled = false, allowEra
         ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, image.width, image.height);
         ctx.drawImage(canvas, 0, 0);
       }
-      await onRecognize(image.toDataURL("image/png").split(",")[1]);
+      const text = await onRecognize(image.toDataURL("image/png").split(",")[1]);
+      if (mounted.current && text) onRecognized?.(text);
     }
     finally { recognizeRequest.current = false; setRecognizing(false); }
   };

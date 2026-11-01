@@ -4957,6 +4957,10 @@ main {
 .activity-modal .row-actions { justify-content: center; flex-wrap: wrap; }
 .activity-modal-symbol { display: block; font-size: 42px; color: #725337; }
 .activity-modal.is-error .activity-modal-symbol { color: #a44235; }
+.handwriting-confirmation { width: min(560px, calc(100vw - 32px)); }
+.handwriting-confirmation-label { display: block; margin: 18px 0 8px; text-align: left; font-weight: 700; }
+.handwriting-confirmation-text { box-sizing: border-box; width: 100%; min-height: 130px; max-height: min(42vh, 360px); resize: vertical; overflow-wrap: anywhere; }
+.handwriting-confirmation .row-actions { margin-top: 20px; }
 .writing-input-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 18px 0; }
 @keyframes modal-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
 @supports (transition-behavior: allow-discrete) {
