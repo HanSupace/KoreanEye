@@ -103,7 +103,7 @@ export default function HandwritingPad({ onRecognize, onRecognized, disabled = f
     };
   }, []);
 
-  const point = (event: PointerEvent<HTMLCanvasElement>) => {
+  const point = (event: { clientX: number; clientY: number }) => {
     const canvas = canvasRef.current!;
     const bounds = canvas.getBoundingClientRect();
     // Border coordinates are excluded; DPR is handled by the context transform.
@@ -134,10 +134,28 @@ export default function HandwritingPad({ onRecognize, onRecognized, disabled = f
     const ctx = event.currentTarget.getContext("2d"); if (!ctx) return;
     event.preventDefault();
     const stroke = strokes.current[strokes.current.length - 1];
-    const p = point(event);
-    if (stroke.tool === "pen") rememberPoint(p);
-    drawStroke(ctx, { ...stroke, points: [stroke.points[stroke.points.length - 1], p] });
-    stroke.points.push(p);
+    // iPadOS may combine several Pencil samples into one pointer event. Draw all
+    // of them so fast strokes stay continuous instead of connecting sparse points.
+    const nativeEvent = event.nativeEvent;
+    const samples = typeof nativeEvent.getCoalescedEvents === "function"
+      ? nativeEvent.getCoalescedEvents()
+      : [nativeEvent];
+    let previous = stroke.points[stroke.points.length - 1];
+    ctx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
+    ctx.strokeStyle = ctx.fillStyle = "#3e342f";
+    ctx.lineWidth = stroke.width;
+    ctx.lineCap = ctx.lineJoin = "round";
+    for (const sample of samples) {
+      const p = point(sample);
+      if (stroke.tool === "pen") rememberPoint(p);
+      ctx.beginPath();
+      ctx.moveTo(previous.x, previous.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      stroke.points.push(p);
+      previous = p;
+    }
+    ctx.globalCompositeOperation = "source-over";
   };
   const stop = (event: PointerEvent<HTMLCanvasElement>) => {
     if (activePointer.current !== event.pointerId) return;

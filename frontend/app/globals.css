@@ -4761,7 +4761,16 @@ main {
   border-radius: 12px;
   background: #fff;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   cursor: crosshair;
+}
+.handwriting-surface,
+.handwriting-surface canvas {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .writing-paper .handwriting-surface {
   height: 400px;
