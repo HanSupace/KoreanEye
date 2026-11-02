@@ -117,7 +117,9 @@ export default function HandwritingPad({ onRecognize, onRecognized, disabled = f
     surface.current.documentHeight = Math.max(surface.current.documentHeight, p.y + PEN_WIDTH / 2);
   };
   const start = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (disabled || recognizing || activePointer.current !== null || event.button !== 0) return;
+    // Safari may report Pencil contact button state differently between strokes.
+    // Keep the left-button restriction for a mouse, while accepting pen/touch input.
+    if (disabled || recognizing || activePointer.current !== null || (event.pointerType === "mouse" && event.button !== 0)) return;
     const ctx = event.currentTarget.getContext("2d");
     if (!ctx || !surface.current.width) return;
     event.preventDefault();
