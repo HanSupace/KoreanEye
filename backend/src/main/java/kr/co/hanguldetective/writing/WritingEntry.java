@@ -20,5 +20,10 @@ public class WritingEntry {
     public String getText() { return text; }
     public Instant getCreatedAt() { return createdAt; }
     public List<WritingError> getErrors() { return errors; }
-    public void addError(WritingError error) { errors.add(error); error.setWriting(this); }
+    public void addError(WritingError error) {
+        if(error.getStartIndex()<0||error.getEndIndex()>text.length()||error.getStartIndex()>=error.getEndIndex()
+            ||!text.substring(error.getStartIndex(),error.getEndIndex()).equals(error.getOriginal()))
+            throw new IllegalArgumentException("복습 문제의 위치가 원문과 일치하지 않아요.");
+        errors.add(error); error.setWriting(this);
+    }
 }

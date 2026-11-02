@@ -14,6 +14,7 @@ public class LearningChapterQuestion {
     @ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "question_id", nullable = false) private LearningQuestion question;
     @Column(nullable = false) private int position;
     @Column(nullable = false) private boolean completed;
+    private java.time.Instant completedAt;
 
     protected LearningChapterQuestion() {}
 
@@ -25,8 +26,14 @@ public class LearningChapterQuestion {
 
     public boolean complete(UUID questionId) {
         if (!question.getId().equals(questionId)) return false;
+        if (!completed) completedAt = java.time.Instant.now();
         completed = true;
         return true;
+    }
+
+    public void completeAfterReview() {
+        completed = true;
+        completedAt = java.time.Instant.now();
     }
 
     public UUID getId() { return id; }
@@ -34,4 +41,5 @@ public class LearningChapterQuestion {
     public LearningQuestion getQuestion() { return question; }
     public int getPosition() { return position; }
     public boolean isCompleted() { return completed; }
+    public java.time.Instant getCompletedAt() { return completedAt; }
 }

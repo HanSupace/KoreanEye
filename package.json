@@ -6,7 +6,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace frontend",
-    "backend": "cd backend && gradlew.bat bootRun",
+    "backend": "cd backend && chcp 65001 > nul && gradlew.bat bootRun",
     "backend:supabase": "npm run backend",
     "build": "npm run build --workspace frontend",
     "start": "npm run start --workspace frontend"

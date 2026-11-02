@@ -39,6 +39,11 @@ public class LearningChapter {
     public List<LearningChapterQuestion> getQuestions() { return questions; }
     public int getCompletedCount() { return (int) questions.stream().filter(LearningChapterQuestion::isCompleted).count(); }
     public boolean isComplete() { return questions.isEmpty() || getCompletedCount() == questions.size(); }
+    public LocalDate getCompletionDate() {
+        if (questions.isEmpty() || !isComplete()) return null;
+        return questions.stream().map(LearningChapterQuestion::getCompletedAt).filter(java.util.Objects::nonNull)
+            .max(Instant::compareTo).map(time -> time.atZone(java.time.ZoneId.of("Asia/Seoul")).toLocalDate()).orElse(chapterDate);
+    }
     public boolean containsQuestion(UUID questionId) {
         return questions.stream().anyMatch(item -> item.getQuestion().getId().equals(questionId));
     }

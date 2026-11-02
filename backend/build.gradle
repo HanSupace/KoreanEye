@@ -26,3 +26,8 @@ dependencies {
 }
 
 tasks.withType(Test).configureEach { useJUnitPlatform() }
+
+// Single policy source for browser and server; bundled into the executable jar.
+tasks.named('processResources') {
+    from('../frontend/lib') { include 'profanity-policy.json' }
+}
